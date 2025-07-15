@@ -38,154 +38,196 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { LoginModal } from "@/components/login-modal"
+import { scanFile } from "@/lib/probium";
+import { useSession, signIn, signOut } from "next-auth/react";
 
 interface FileAnalysis {
-  fileName: string
-  fileSize: string
-  fileType: string
-  uploadTime: string
-  scanProgress: number
-  status: "uploading" | "scanning" | "complete"
-  threats: number
+  fileName: string;
+  fileSize: string;
+  fileType: string;
+  uploadTime: string;
+  scanProgress: number;
+  status: "uploading" | "scanning" | "complete" | "error";
+  threats: number;
   engines: {
-    name: string
-    result: "clean" | "threat" | "suspicious"
-    details?: string
-  }[]
-  metadata: {
-    md5: string
-    sha1: string
-    sha256: string
-    firstSeen: string
-    lastSeen: string
-    submissions: number
-  }
-  behaviorAnalysis: {
-    networkActivity: boolean
-    fileModification: boolean
-    registryChanges: boolean
-    processCreation: boolean
-  }
+    name: string;
+    result: "clean" | "threat" | "suspicious";
+    details?: string;
+  }[];
+  metadata: any;
+  behaviorAnalysis?: any;
+  error?: string;
 }
 
-const mockEngines = [
-  { name: "Probium Core", result: "clean" as const },
-  { name: "ClamAV", result: "clean" as const },
-  { name: "Windows Defender", result: "clean" as const },
-  { name: "Kaspersky", result: "threat" as const, details: "Trojan.Win32.Generic" },
-  { name: "Bitdefender", result: "clean" as const },
-  { name: "Norton", result: "suspicious" as const, details: "Heuristic detection" },
-  { name: "McAfee", result: "clean" as const },
-  { name: "Avast", result: "clean" as const },
-  { name: "ESET", result: "clean" as const },
-  { name: "Trend Micro", result: "clean" as const },
-]
-
 export default function ProbiumLens() {
-  const [analysis, setAnalysis] = useState<FileAnalysis | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [isLoginOpen, setIsLoginOpen] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const { data: session, status } = useSession();
+  const [analysis, setAnalysis] = useState<FileAnalysis | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
 
-  const simulateAnalysis = useCallback((file: File) => {
-    const newAnalysis: FileAnalysis = {
-      fileName: file.name,
-      fileSize: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-      fileType: file.type || "Unknown",
-      uploadTime: new Date().toLocaleString(),
-      scanProgress: 0,
-      status: "uploading",
-      threats: 0,
-      engines: [],
+  // Only allow scan/upload if logged in
+  if (status === "loading") {
+    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
+  }
+
+  if (!session) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen">
+        <h1 className="text-3xl font-bold mb-4">Probium Lens</h1>
+        <p className="mb-8">Sign in with Google to scan files and view your scan history.</p>
+        <button
+          onClick={() => signIn("google")}
+          className="bg-blue-600 text-white px-6 py-3 rounded-lg text-lg font-semibold shadow hover:bg-blue-700"
+        >
+          Sign in with Google
+        </button>
+      </div>
+    );
+  }
+
+  // Helper to parse backend scan result into FileAnalysis
+  const parseScanResult = (result: any): FileAnalysis => {
+    // Map engines_used to a list of engines, using threat_level for all (since no per-engine breakdown)
+    const engines = Array.isArray(result.engines_used)
+      ? result.engines_used.map((engine: string) => ({
+          name: engine,
+          result:
+            result.security?.threat_level === "high"
+              ? "threat"
+              : result.security?.threat_level === "medium"
+              ? "suspicious"
+              : "clean",
+        }))
+      : [];
+    const threats = result.security?.threat_level === "high" || result.security?.threat_level === "medium" ? 1 : 0;
+    return {
+      fileName: result.filename,
+      fileSize: `${(result.size / 1024 / 1024).toFixed(2)} MB`,
+      fileType: result.mime_type || result.detected_type || "Unknown",
+      uploadTime: result.timestamp ? new Date(result.timestamp).toLocaleString() : new Date().toLocaleString(),
+      scanProgress: 100,
+      status: "complete",
+      threats,
+      engines,
       metadata: {
-        md5: "5d41402abc4b2a76b9719d911017c592",
-        sha1: "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d",
-        sha256: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-        firstSeen: "2024-01-15 14:30:22",
-        lastSeen: "2024-01-20 09:15:45",
-        submissions: 127,
+        ...result.metadata,
+        ...result.hashes,
       },
-      behaviorAnalysis: {
-        networkActivity: Math.random() > 0.7,
-        fileModification: Math.random() > 0.8,
-        registryChanges: Math.random() > 0.6,
-        processCreation: Math.random() > 0.5,
-      },
-    }
-
-    setAnalysis(newAnalysis)
-
-    // Simulate upload progress
-    const uploadInterval = setInterval(() => {
-      setAnalysis((prev) => {
-        if (!prev || prev.scanProgress >= 100) return prev
-        const newProgress = Math.min(prev.scanProgress + Math.random() * 20, 100)
-
-        if (newProgress >= 100) {
-          clearInterval(uploadInterval)
-          return {
-            ...prev,
-            scanProgress: 100,
-            status: "scanning",
-          }
-        }
-
-        return {
-          ...prev,
-          scanProgress: newProgress,
-        }
-      })
-    }, 150)
-
-    // Simulate scanning process
-    setTimeout(() => {
-      const scanInterval = setInterval(() => {
-        setAnalysis((prev) => {
-          if (!prev) return prev
-
-          const enginesScanned = prev.engines.length
-          if (enginesScanned >= mockEngines.length) {
-            clearInterval(scanInterval)
-            const threatCount = prev.engines.filter((e) => e.result === "threat").length
-            return {
-              ...prev,
-              status: "complete",
-              threats: threatCount,
-            }
-          }
-
-          const nextEngine = mockEngines[enginesScanned]
-          return {
-            ...prev,
-            engines: [...prev.engines, nextEngine],
-          }
-        })
-      }, 250)
-    }, 800)
-  }, [])
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      setIsDragging(false)
-
-      const files = Array.from(e.dataTransfer.files)
-      if (files.length > 0) {
-        simulateAnalysis(files[0])
-      }
-    },
-    [simulateAnalysis],
-  )
+      behaviorAnalysis: {},
+    };
+  };
 
   const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
       if (files && files.length > 0) {
-        simulateAnalysis(files[0])
+        setLoading(true);
+        setAnalysis({
+          fileName: files[0].name,
+          fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+          fileType: files[0].type || "Unknown",
+          uploadTime: new Date().toLocaleString(),
+          scanProgress: 0,
+          status: "uploading",
+          threats: 0,
+          engines: [],
+          metadata: {},
+        });
+        try {
+          const res = await scanFile(files[0]);
+          if (res.success && res.result) {
+            setAnalysis(parseScanResult(res.result));
+          } else {
+            setAnalysis({
+              fileName: files[0].name,
+              fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+              fileType: files[0].type || "Unknown",
+              uploadTime: new Date().toLocaleString(),
+              scanProgress: 100,
+              status: "error",
+              threats: 0,
+              engines: [],
+              metadata: {},
+              error: res.detail || "Scan failed."
+            });
+          }
+        } catch (err: any) {
+          setAnalysis({
+            fileName: files[0].name,
+            fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+            fileType: files[0].type || "Unknown",
+            uploadTime: new Date().toLocaleString(),
+            scanProgress: 100,
+            status: "error",
+            threats: 0,
+            engines: [],
+            metadata: {},
+            error: err?.message || "Scan failed."
+          });
+        }
+        setLoading(false);
       }
     },
-    [simulateAnalysis],
-  )
+    []
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) {
+        setLoading(true);
+        setAnalysis({
+          fileName: files[0].name,
+          fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+          fileType: files[0].type || "Unknown",
+          uploadTime: new Date().toLocaleString(),
+          scanProgress: 0,
+          status: "uploading",
+          threats: 0,
+          engines: [],
+          metadata: {},
+        });
+        try {
+          const res = await scanFile(files[0]);
+          if (res.success && res.result) {
+            setAnalysis(parseScanResult(res.result));
+          } else {
+            setAnalysis({
+              fileName: files[0].name,
+              fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+              fileType: files[0].type || "Unknown",
+              uploadTime: new Date().toLocaleString(),
+              scanProgress: 100,
+              status: "error",
+              threats: 0,
+              engines: [],
+              metadata: {},
+              error: res.detail || "Scan failed."
+            });
+          }
+        } catch (err: any) {
+          setAnalysis({
+            fileName: files[0].name,
+            fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
+            fileType: files[0].type || "Unknown",
+            uploadTime: new Date().toLocaleString(),
+            scanProgress: 100,
+            status: "error",
+            threats: 0,
+            engines: [],
+            metadata: {},
+            error: err?.message || "Scan failed."
+          });
+        }
+        setLoading(false);
+      }
+    },
+    []
+  );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -427,7 +469,7 @@ export default function ProbiumLens() {
                       </span>
                       <span className="text-muted-foreground">
                         {analysis.status === "scanning"
-                          ? `${analysis.engines.length}/${mockEngines.length} engines`
+                          ? `${analysis.engines.length}/${analysis.engines.length} engines`
                           : `${Math.round(analysis.scanProgress)}%`}
                       </span>
                     </div>
@@ -435,7 +477,7 @@ export default function ProbiumLens() {
                       value={
                         analysis.status === "uploading"
                           ? analysis.scanProgress
-                          : (analysis.engines.length / mockEngines.length) * 100
+                          : (analysis.engines.length / analysis.engines.length) * 100
                       }
                       className="h-3"
                     />
@@ -457,13 +499,13 @@ export default function ProbiumLens() {
                   </Alert>
                 )}
 
-                <Tabs defaultValue="detection" className="w-full">
+                <Tabs defaultValue="details" className="w-full">
                   <TabsList className="grid w-full grid-cols-4 h-12">
-                    <TabsTrigger value="detection" className="text-base">
-                      Detection Results
-                    </TabsTrigger>
                     <TabsTrigger value="details" className="text-base">
                       File Details
+                    </TabsTrigger>
+                    <TabsTrigger value="detection" className="text-base">
+                      Detection Results
                     </TabsTrigger>
                     <TabsTrigger value="behavior" className="text-base">
                       Behavior Analysis
@@ -472,55 +514,6 @@ export default function ProbiumLens() {
                       Intelligence
                     </TabsTrigger>
                   </TabsList>
-
-                  <TabsContent value="detection" className="space-y-6 mt-8">
-                    <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-3 text-xl">
-                          <Eye className="w-6 h-6 text-blue-600" />
-                          Security Engine Results
-                        </CardTitle>
-                        <CardDescription className="text-base">
-                          Scanned by {analysis.engines.length} leading security engines
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid gap-4">
-                          {analysis.engines.map((engine, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div
-                                  className={`w-4 h-4 rounded-full ${
-                                    engine.result === "clean"
-                                      ? "bg-green-500"
-                                      : engine.result === "threat"
-                                        ? "bg-red-500"
-                                        : "bg-yellow-500"
-                                  }`}
-                                />
-                                <span className="font-medium text-base">{engine.name}</span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <Badge variant={getThreatColor(engine.result)} className="text-sm px-3 py-1">
-                                  {engine.result === "clean"
-                                    ? "✓ Clean"
-                                    : engine.result === "threat"
-                                      ? "⚠️ Threat"
-                                      : "⚡ Suspicious"}
-                                </Badge>
-                                {engine.details && (
-                                  <span className="text-sm text-muted-foreground font-mono">{engine.details}</span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
 
                   <TabsContent value="details" className="space-y-6 mt-8">
                     <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
@@ -596,6 +589,55 @@ export default function ProbiumLens() {
                               </p>
                             </div>
                           </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+
+                  <TabsContent value="detection" className="space-y-6 mt-8">
+                    <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-3 text-xl">
+                          <Eye className="w-6 h-6 text-blue-600" />
+                          Security Engine Results
+                        </CardTitle>
+                        <CardDescription className="text-base">
+                          Scanned by {analysis.engines.length} leading security engines
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid gap-4">
+                          {analysis.engines.map((engine, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div
+                                  className={`w-4 h-4 rounded-full ${
+                                    engine.result === "clean"
+                                      ? "bg-green-500"
+                                      : engine.result === "threat"
+                                        ? "bg-red-500"
+                                        : "bg-yellow-500"
+                                  }`}
+                                />
+                                <span className="font-medium text-base">{engine.name}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <Badge variant={getThreatColor(engine.result)} className="text-sm px-3 py-1">
+                                  {engine.result === "clean"
+                                    ? "✓ Clean"
+                                    : engine.result === "threat"
+                                      ? "⚠️ Threat"
+                                      : "⚡ Suspicious"}
+                                </Badge>
+                                {engine.details && (
+                                  <span className="text-sm text-muted-foreground font-mono">{engine.details}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </CardContent>
                     </Card>
