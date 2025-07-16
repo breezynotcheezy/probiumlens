@@ -364,7 +364,7 @@ export default function ProbiumLens() {
                   <Upload className="w-8 h-8 text-blue-600" />
                 </div>
                 <h3 className="text-2xl font-semibold mb-3">Drop your file here</h3>
-                <p className="text-muted-foreground mb-8 text-lg">Or click to browse • Maximum file size: 100MB</p>
+                <p className="text-muted-foreground mb-8 text-lg">Or click to browse</p>
                 <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" />
                 <Button
                   asChild
