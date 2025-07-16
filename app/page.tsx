@@ -119,7 +119,8 @@ export default function ProbiumLens() {
           metadata: {},
         });
         try {
-          const res = await scanFile(files[0]);
+          const idToken = (session as any)?.id_token;
+          const res = await scanFile(files[0], {}, idToken);
           if (res.success && res.result) {
             setAnalysis(parseScanResult(res.result));
           } else {
@@ -153,7 +154,7 @@ export default function ProbiumLens() {
         setLoading(false);
       }
     },
-    []
+    [session]
   );
 
   const handleDrop = useCallback(
@@ -175,7 +176,8 @@ export default function ProbiumLens() {
           metadata: {},
         });
         try {
-          const res = await scanFile(files[0]);
+          const idToken = (session as any)?.id_token;
+          const res = await scanFile(files[0], {}, idToken);
           if (res.success && res.result) {
             setAnalysis(parseScanResult(res.result));
           } else {
@@ -209,7 +211,7 @@ export default function ProbiumLens() {
         setLoading(false);
       }
     },
-    []
+    [session]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {

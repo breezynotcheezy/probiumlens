@@ -16,7 +16,7 @@ export async function scanFile(file: File, options: {
   generate_hashes?: boolean,
   extract_metadata_flag?: boolean,
   validate_signatures?: boolean,
-} = {}) {
+} = {}, idToken?: string) {
   const formData = new FormData();
   formData.append("file", file);
   if (options.engines) formData.append("engines", options.engines);
@@ -24,9 +24,12 @@ export async function scanFile(file: File, options: {
   if (options.generate_hashes !== undefined) formData.append("generate_hashes", String(options.generate_hashes));
   if (options.extract_metadata_flag !== undefined) formData.append("extract_metadata_flag", String(options.extract_metadata_flag));
   if (options.validate_signatures !== undefined) formData.append("validate_signatures", String(options.validate_signatures));
+  const headers: Record<string, string> = {};
+  if (idToken) headers["Authorization"] = `Bearer ${idToken}`;
   const res = await fetch(`${API_BASE}/scan/file`, {
     method: "POST",
     body: formData,
+    headers,
   });
   return res.json();
 }
