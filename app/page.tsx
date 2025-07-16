@@ -67,25 +67,8 @@ export default function ProbiumLens() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  // Only allow scan/upload if logged in
-  if (status === "loading") {
-    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
-  }
-
-  if (!session) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <h1 className="text-3xl font-bold mb-4">Probium Lens</h1>
-        <p className="mb-8">Sign in with Google to scan files and view your scan history.</p>
-        <button
-          onClick={() => signIn("google")}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg text-lg font-semibold shadow hover:bg-blue-700"
-        >
-          Sign in with Google
-        </button>
-      </div>
-    );
-  }
+  // Remove any forced login screen or blocking logic
+  // Always render the main UI below
 
   // Helper to parse backend scan result into FileAnalysis
   const parseScanResult = (result: any): FileAnalysis => {
