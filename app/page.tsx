@@ -40,6 +40,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { LoginModal } from "@/components/login-modal"
 import { scanFile } from "@/lib/probium";
 import { useSession, signIn, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 interface FileAnalysis {
   fileName: string;
@@ -66,6 +67,7 @@ export default function ProbiumLens() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   // Remove any forced login screen or blocking logic
   // Always render the main UI below
@@ -102,6 +104,15 @@ export default function ProbiumLens() {
     };
   };
 
+  // Helper to save scan to user history in localStorage
+  const saveScanToHistory = (scan: FileAnalysis) => {
+    if (!session?.user?.email) return;
+    const key = `probium_history_${session.user.email}`;
+    const prev = JSON.parse(localStorage.getItem(key) || '[]');
+    prev.unshift(scan); // add newest first
+    localStorage.setItem(key, JSON.stringify(prev.slice(0, 100)));
+  };
+
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
@@ -122,7 +133,9 @@ export default function ProbiumLens() {
           const idToken = (session as any)?.id_token;
           const res = await scanFile(files[0], {}, idToken);
           if (res.success && res.result) {
-            setAnalysis(parseScanResult(res.result));
+            const parsed = parseScanResult(res.result);
+            setAnalysis(parsed);
+            saveScanToHistory(parsed);
           } else {
             setAnalysis({
               fileName: files[0].name,
@@ -179,7 +192,9 @@ export default function ProbiumLens() {
           const idToken = (session as any)?.id_token;
           const res = await scanFile(files[0], {}, idToken);
           if (res.success && res.result) {
-            setAnalysis(parseScanResult(res.result));
+            const parsed = parseScanResult(res.result);
+            setAnalysis(parsed);
+            saveScanToHistory(parsed);
           } else {
             setAnalysis({
               fileName: files[0].name,
@@ -280,9 +295,7 @@ export default function ProbiumLens() {
       <header className="border-b bg-white/90 backdrop-blur-md shadow-sm dark:bg-slate-900/90">
         <div className="container mx-auto flex h-16 items-center justify-between px-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600">
-              <Eye className="h-6 w-6 text-white" />
-            </div>
+            {/* Removed Eye icon from top left */}
             <div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 Probium Lens
@@ -293,31 +306,42 @@ export default function ProbiumLens() {
 
           <div className="flex items-center gap-4">
             {session ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-10 w-10 rounded-full">
-                    <Avatar className="h-10 w-10">
-                      <AvatarImage src={session.user?.image || "/placeholder.svg"} alt={session.user?.name || "User"} />
-                      <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
-                        {session.user?.name?.charAt(0) || "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-64" align="end" forceMount>
-                  <DropdownMenuLabel className="font-normal">
-                    <div className="flex flex-col space-y-2">
-                      <p className="text-sm font-medium leading-none">{session.user?.name}</p>
-                      <p className="text-xs leading-none text-muted-foreground">{session.user?.email}</p>
-                    </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => signOut()}>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Sign out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push("/history")}
+                  className="flex items-center gap-2"
+                >
+                  <History className="h-4 w-4" />
+                  <span className="hidden sm:inline">History</span>
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-10 w-10 rounded-full">
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={session.user?.image || "/placeholder.svg"} alt={session.user?.name || "User"} />
+                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                          {session.user?.name?.charAt(0) || "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-64" align="end" forceMount>
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col space-y-2">
+                        <p className="text-sm font-medium leading-none">{session.user?.name}</p>
+                        <p className="text-xs leading-none text-muted-foreground">{session.user?.email}</p>
+                      </div>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => signOut()}>
+                      <LogOut className="mr-2 h-4 w-4" />
+                      <span>Sign out</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ) : (
               <Button
                 variant="default"
@@ -574,38 +598,100 @@ export default function ProbiumLens() {
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid gap-4">
-                          {analysis.engines.map((engine, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50"
-                            >
-                              <div className="flex items-center gap-4">
-                                <div
-                                  className={`w-4 h-4 rounded-full ${
-                                    engine.result === "clean"
-                                      ? "bg-green-500"
-                                      : engine.result === "threat"
-                                        ? "bg-red-500"
-                                        : "bg-yellow-500"
-                                  }`}
-                                />
-                                <span className="font-medium text-base">{engine.name}</span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <Badge variant={getThreatColor(engine.result)} className="text-sm px-3 py-1">
-                                  {engine.result === "clean"
-                                    ? "✓ Clean"
-                                    : engine.result === "threat"
-                                      ? "⚠️ Threat"
-                                      : "⚡ Suspicious"}
-                                </Badge>
-                                {engine.details && (
-                                  <span className="text-sm text-muted-foreground font-mono">{engine.details}</span>
-                                )}
+                        {/* Threat Summary */}
+                        <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 text-center">
+                            <div className="text-3xl font-bold text-blue-600 mb-2">
+                              {analysis.engines.length}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">
+                              Security Engines
+                            </div>
+                          </div>
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 text-center">
+                            <div className="text-3xl font-bold text-green-600 mb-2">
+                              {analysis.engines.filter(e => e.result === "clean").length}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">
+                              Clean Results
+                            </div>
+                          </div>
+                          <div className={`p-6 rounded-xl border ${
+                            analysis.threats > 0 
+                              ? "bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20" 
+                              : "bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900/20 dark:to-gray-800/20"
+                          } text-center`}>
+                            <div className={`text-3xl font-bold mb-2 ${
+                              analysis.threats > 0 ? "text-red-600" : "text-gray-600"
+                            }`}>
+                              {analysis.threats}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">
+                              Threats Detected
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Detection Results by Category */}
+                        <div className="space-y-6">
+                          <h4 className="font-semibold text-lg">Detection Results by Engine</h4>
+                          
+                          {/* Clean Results */}
+                          <div className="space-y-3">
+                            <h5 className="text-base font-medium flex items-center gap-2">
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                              Clean Results ({analysis.engines.filter(e => e.result === "clean").length})
+                            </h5>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              {analysis.engines
+                                .filter(e => e.result === "clean")
+                                .map((engine, idx) => (
+                                  <div key={idx} className="px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 text-center">
+                                    <span className="text-sm font-medium">{engine.name}</span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                          
+                          {/* Suspicious Results */}
+                          {analysis.engines.some(e => e.result === "suspicious") && (
+                            <div className="space-y-3">
+                              <h5 className="text-base font-medium flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                                Suspicious Results ({analysis.engines.filter(e => e.result === "suspicious").length})
+                              </h5>
+                              <div className="grid grid-cols-1 gap-3">
+                                {analysis.engines
+                                  .filter(e => e.result === "suspicious")
+                                  .map((engine, idx) => (
+                                    <div key={idx} className="p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-100 dark:border-yellow-900/20">
+                                      <div className="font-medium">{engine.name}</div>
+                                      {engine.details && <div className="text-sm mt-1 text-muted-foreground">{engine.details}</div>}
+                                    </div>
+                                  ))}
                               </div>
                             </div>
-                          ))}
+                          )}
+                          
+                          {/* Threat Results */}
+                          {analysis.engines.some(e => e.result === "threat") && (
+                            <div className="space-y-3">
+                              <h5 className="text-base font-medium flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-red-500" />
+                                Threat Results ({analysis.engines.filter(e => e.result === "threat").length})
+                              </h5>
+                              <div className="grid grid-cols-1 gap-3">
+                                {analysis.engines
+                                  .filter(e => e.result === "threat")
+                                  .map((engine, idx) => (
+                                    <div key={idx} className="p-3 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20">
+                                      <div className="font-medium">{engine.name}</div>
+                                      {engine.details && <div className="text-sm mt-1 text-muted-foreground">{engine.details}</div>}
+                                    </div>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -619,58 +705,147 @@ export default function ProbiumLens() {
                           Behavioral Analysis
                         </CardTitle>
                         <CardDescription className="text-base">
-                          Analysis of file behavior and system interactions
+                          Detailed analysis of file behavior and system interactions
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid gap-4">
-                          <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
-                            <div className="flex items-center gap-3">
-                              <Globe className="w-5 h-5 text-muted-foreground" />
-                              <span className="font-medium">Network Activity</span>
+                        <div className="space-y-8">
+                          {/* File System Activity */}
+                          <div className="space-y-4">
+                            <h4 className="text-lg font-semibold flex items-center gap-2">
+                              <FileText className="h-5 w-5 text-blue-600" />
+                              File System Activity
+                            </h4>
+                            <div className="grid gap-4">
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Creates Files</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.fileCreation ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.fileCreation ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Modifies Files</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.fileModification ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.fileModification ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Deletes Files</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.fileDeletion ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.fileDeletion ? "Yes" : "No"}
+                                </Badge>
+                              </div>
                             </div>
-                            <Badge
-                              variant={analysis.behaviorAnalysis.networkActivity ? "destructive" : "default"}
-                              className="text-sm px-3 py-1"
-                            >
-                              {analysis.behaviorAnalysis.networkActivity ? "⚠️ Detected" : "✓ None"}
-                            </Badge>
                           </div>
-                          <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
-                            <div className="flex items-center gap-3">
-                              <FileText className="w-5 h-5 text-muted-foreground" />
-                              <span className="font-medium">File Modification</span>
+                          
+                          {/* Network Activity */}
+                          <div className="space-y-4">
+                            <h4 className="text-lg font-semibold flex items-center gap-2">
+                              <Globe className="h-5 w-5 text-blue-600" />
+                              Network Activity
+                            </h4>
+                            <div className="grid gap-4">
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Outbound Connections</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.networkActivity ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.networkActivity ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Data Exfiltration</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.dataExfiltration ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.dataExfiltration ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Command & Control</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.commandAndControl ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.commandAndControl ? "Yes" : "No"}
+                                </Badge>
+                              </div>
                             </div>
-                            <Badge
-                              variant={analysis.behaviorAnalysis.fileModification ? "destructive" : "default"}
-                              className="text-sm px-3 py-1"
-                            >
-                              {analysis.behaviorAnalysis.fileModification ? "⚠️ Detected" : "✓ None"}
-                            </Badge>
                           </div>
-                          <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
-                            <div className="flex items-center gap-3">
-                              <Settings className="w-5 h-5 text-muted-foreground" />
-                              <span className="font-medium">Registry Changes</span>
+                          
+                          {/* System Modifications */}
+                          <div className="space-y-4">
+                            <h4 className="text-lg font-semibold flex items-center gap-2">
+                              <Settings className="h-5 w-5 text-blue-600" />
+                              System Modifications
+                            </h4>
+                            <div className="grid gap-4">
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Registry Changes</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.registryChanges ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.registryChanges ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Process Creation</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.processCreation ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.processCreation ? "Yes" : "No"}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Persistence Mechanisms</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.persistence ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.persistence ? "Yes" : "No"}
+                                </Badge>
+                              </div>
                             </div>
-                            <Badge
-                              variant={analysis.behaviorAnalysis.registryChanges ? "destructive" : "default"}
-                              className="text-sm px-3 py-1"
-                            >
-                              {analysis.behaviorAnalysis.registryChanges ? "⚠️ Detected" : "✓ None"}
-                            </Badge>
                           </div>
-                          <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
-                            <div className="flex items-center gap-3">
-                              <Zap className="w-5 h-5 text-muted-foreground" />
-                              <span className="font-medium">Process Creation</span>
+
+                          {/* Behavioral Score */}
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                              <div>
+                                <h4 className="text-lg font-semibold mb-2">Behavioral Risk Score</h4>
+                                <p className="text-muted-foreground">Overall assessment based on observed behaviors</p>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="w-16 h-16 rounded-full flex items-center justify-center border-4 border-blue-500">
+                                  <span className="text-xl font-bold text-blue-600">
+                                    {analysis.behaviorAnalysis?.riskScore || 0}
+                                  </span>
+                                </div>
+                                <div>
+                                  <Badge variant={
+                                    (analysis.behaviorAnalysis?.riskScore || 0) > 70 ? "destructive" : 
+                                    (analysis.behaviorAnalysis?.riskScore || 0) > 30 ? "secondary" : "default"
+                                  } className="text-sm px-3 py-1">
+                                    {(analysis.behaviorAnalysis?.riskScore || 0) > 70 ? "High Risk" : 
+                                     (analysis.behaviorAnalysis?.riskScore || 0) > 30 ? "Medium Risk" : "Low Risk"}
+                                  </Badge>
+                                  <p className="text-xs text-muted-foreground mt-1">Scale: 0-100</p>
+                                </div>
+                              </div>
                             </div>
-                            <Badge
-                              variant={analysis.behaviorAnalysis.processCreation ? "destructive" : "default"}
-                              className="text-sm px-3 py-1"
-                            >
-                              {analysis.behaviorAnalysis.processCreation ? "⚠️ Detected" : "✓ None"}
-                            </Badge>
                           </div>
                         </div>
                       </CardContent>
@@ -689,18 +864,78 @@ export default function ProbiumLens() {
                       <CardContent>
                         <div className="grid grid-cols-3 gap-6 text-center">
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20">
-                            <div className="text-3xl font-bold text-blue-600 mb-2">{analysis.metadata.submissions}</div>
+                            <div className="text-3xl font-bold text-blue-600 mb-2">
+                              {analysis.metadata.submissions || 
+                                (() => {
+                                  // Calculate submissions from local storage if API doesn't provide it
+                                  try {
+                                    const allKeys = Object.keys(localStorage);
+                                    const historyKeys = allKeys.filter(key => key.startsWith('probium_history_'));
+                                    let count = 0;
+                                    historyKeys.forEach(key => {
+                                      const history = JSON.parse(localStorage.getItem(key) || '[]');
+                                      count += history.length;
+                                    });
+                                    return count + 1; // +1 for current submission
+                                  } catch (e) {
+                                    return 1; // At least this submission
+                                  }
+                                })()
+                              }
+                            </div>
                             <div className="text-sm font-medium text-muted-foreground">Community Submissions</div>
                           </div>
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20">
-                            <div className="text-3xl font-bold text-green-600 mb-2">Jan 15</div>
+                            <div className="text-3xl font-bold text-green-600 mb-2">
+                              {analysis.metadata.first_seen || 
+                                (() => {
+                                  // Use current date if API doesn't provide it
+                                  try {
+                                    return new Date().toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    });
+                                  } catch (e) {
+                                    return "Today";
+                                  }
+                                })()
+                              }
+                            </div>
                             <div className="text-sm font-medium text-muted-foreground">First Seen</div>
                           </div>
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20">
-                            <div className="text-3xl font-bold text-purple-600 mb-2">Jan 20</div>
+                            <div className="text-3xl font-bold text-purple-600 mb-2">
+                              {analysis.metadata.last_seen || 
+                                (() => {
+                                  // Use current date if API doesn't provide it
+                                  try {
+                                    return new Date().toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    });
+                                  } catch (e) {
+                                    return "Today";
+                                  }
+                                })()
+                              }
+                            </div>
                             <div className="text-sm font-medium text-muted-foreground">Last Seen</div>
                           </div>
                         </div>
+                        
+                        {/* View Personal History Link */}
+                        {session?.user && (
+                          <div className="mt-8 text-center">
+                            <Button
+                              variant="outline"
+                              onClick={() => router.push('/history')}
+                              className="bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100"
+                            >
+                              <History className="mr-2 h-4 w-4" />
+                              View Your Personal Scan History
+                            </Button>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   </TabsContent>
