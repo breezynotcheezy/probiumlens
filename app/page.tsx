@@ -43,6 +43,9 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
+import { Send } from "lucide-react";
 
 interface FileAnalysis {
   fileName: string;
@@ -74,6 +77,15 @@ export default function ProbiumLens() {
   const [selectedEngines, setSelectedEngines] = useState<string[]>([]);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [aiInsights, setAiInsights] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "ai"; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatTemperature, setChatTemperature] = useState(0.6);
+  const [chatMaxTokens, setChatMaxTokens] = useState(400);
 
   // Fetch available engines on mount
   useEffect(() => {
@@ -124,14 +136,135 @@ export default function ProbiumLens() {
     };
   };
 
-  // Helper to save scan to user history in localStorage
-  const saveScanToHistory = (scan: FileAnalysis) => {
+  // 1. Add a helper to get a unique key for a scan (using SHA256 or fileName+size+type+timestamp as fallback)
+  function getScanKey(scan: FileAnalysis) {
+    if (!scan) return null;
+    // Prefer SHA256, fallback to fileName+size+type+uploadTime
+    return (
+      scan.metadata?.sha256 ||
+      `${scan.fileName}|${scan.fileSize}|${scan.fileType}|${scan.uploadTime}`
+    );
+  }
+
+  // 2. Update saveScanToHistory to also save AI insight if available
+  const saveScanToHistory = (scan: FileAnalysis, aiInsight: string | null) => {
     if (!session?.user?.email) return;
     const key = `probium_history_${session.user.email}`;
     const prev = JSON.parse(localStorage.getItem(key) || '[]');
-    prev.unshift(scan); // add newest first
+    // Attach aiInsight if provided
+    const scanWithAI = aiInsight ? { ...scan, _aiInsight: aiInsight } : scan;
+    prev.unshift(scanWithAI); // add newest first
     localStorage.setItem(key, JSON.stringify(prev.slice(0, 100)));
+    // Also cache AI insight by scan key
+    if (aiInsight) {
+      const scanKey = getScanKey(scan);
+      if (scanKey) localStorage.setItem(`probium_ai_${scanKey}`, aiInsight);
+    }
   };
+
+  // 3. On mount, check if restoring from history (sessionStorage)
+  useEffect(() => {
+    const selected = sessionStorage.getItem("selectedScan");
+    if (selected) {
+      try {
+        const scan = JSON.parse(selected);
+        setAnalysis(scan);
+        // Try to restore cached AI insight
+        const scanKey = getScanKey(scan);
+        if (scanKey) {
+          const cachedAI = localStorage.getItem(`probium_ai_${scanKey}`) || scan._aiInsight || null;
+          if (cachedAI) setAiInsights(cachedAI);
+        }
+        sessionStorage.removeItem("selectedScan");
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, []);
+
+  // Helper to parse AI insights into sections
+  function parseAiInsights(text: string) {
+    const sections: { [key: string]: string[] } = {};
+    let current: string | null = null;
+    text.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (/^Summary[:：]?$/i.test(trimmed)) current = "Summary";
+      else if (/^Notable Findings[:：]?$/i.test(trimmed)) current = "Notable Findings";
+      else if (/^Recommendations?[:：]?$/i.test(trimmed)) current = "Recommendations";
+      else if (current && trimmed) {
+        if (!sections[current]) sections[current] = [];
+        sections[current].push(trimmed.replace(/^[-•\d.]+\s*/, ""));
+      }
+    });
+    return sections;
+  }
+
+  // Chatbox handler
+  const sendChat = async () => {
+    if (!chatInput.trim() || !analysis) return;
+    setChatLoading(true);
+    setChatError(null);
+    const userMsg = { role: "user" as const, content: chatInput };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+    try {
+      const res = await fetch("/api/ai-insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scanData: analysis,
+          userPrompt: chatInput,
+          temperature: chatTemperature,
+          max_tokens: chatMaxTokens,
+        }),
+      });
+      const data = await res.json();
+      if (data.insights) {
+        setChatMessages((prev) => [...prev, { role: "ai", content: data.insights }]);
+      } else {
+        setChatError(data.error || "No response from AI.");
+      }
+    } catch (err: any) {
+      setChatError(err?.message || "Failed to fetch AI response.");
+    }
+    setChatLoading(false);
+  };
+
+  // 4. Update fetchAiInsights to cache result per scan
+  const fetchAiInsights = useCallback(async () => {
+    if (!analysis) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiInsights(null);
+    const scanKey = getScanKey(analysis);
+    // Check cache first
+    if (scanKey) {
+      const cached = localStorage.getItem(`probium_ai_${scanKey}`);
+      if (cached) {
+        setAiInsights(cached);
+        setAiLoading(false);
+        return;
+      }
+    }
+    try {
+      const res = await fetch("/api/ai-insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanData: analysis }),
+      });
+      const data = await res.json();
+      if (data.insights) {
+        setAiInsights(data.insights);
+        // Cache it
+        if (scanKey) localStorage.setItem(`probium_ai_${scanKey}`, data.insights);
+        // Also update history with AI insight
+        saveScanToHistory(analysis, data.insights);
+      } else setAiError(data.error || "No insights available.");
+    } catch (err: any) {
+      setAiError(err?.message || "Failed to fetch AI insights.");
+    }
+    setAiLoading(false);
+  }, [analysis, session]);
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -160,7 +293,7 @@ export default function ProbiumLens() {
           if (res.success && res.result) {
             const parsed = parseScanResult(res.result);
             setAnalysis(parsed);
-            saveScanToHistory(parsed);
+            saveScanToHistory(parsed, null); // No AI insight for initial scan
           } else {
             setAnalysis({
               fileName: files[0].name,
@@ -219,7 +352,7 @@ export default function ProbiumLens() {
           if (res.success && res.result) {
             const parsed = parseScanResult(res.result);
             setAnalysis(parsed);
-            saveScanToHistory(parsed);
+            saveScanToHistory(parsed, null); // No AI insight for initial scan
           } else {
             setAnalysis({
               fileName: files[0].name,
@@ -313,6 +446,17 @@ export default function ProbiumLens() {
       }
     }
   }, [])
+
+  // Handler to fetch AI insights
+  // This useEffect is now redundant as fetchAiInsights handles caching
+  // useEffect(() => {
+  //   if (analysis) {
+  //     fetchAiInsights();
+  //   }
+  // }, [analysis, fetchAiInsights]);
+
+  // 6. Polish Intelligence tab content for friendliness (add more helpful text, icons, etc. as needed)
+  // This section is not directly related to the requested changes, so it's omitted.
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
@@ -410,85 +554,83 @@ export default function ProbiumLens() {
           /* Upload Area */
           <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-white/80 backdrop-blur-sm">
             <CardContent className="p-12">
-              {/* Advanced Settings Popover */}
-              <div className="flex justify-center mb-8">
-                <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex items-center gap-2"
-                      aria-expanded={advancedOpen}
-                      disabled={!session}
-                    >
-                      <Settings className="h-4 w-4" />
-                      Advanced Settings
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="center" side="bottom" sideOffset={8} className="w-96">
-                    <div className="mb-4">
-                      <h4 className="text-lg font-semibold mb-2">Select Security Engines</h4>
-                      <div className="flex flex-wrap gap-2 mb-2 max-h-64 overflow-y-auto">
-                        {engines.map((engine) => (
-                          <Button
-                            key={engine.name}
-                            variant={selectedEngines.includes(engine.name) ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => {
-                              setSelectedEngines((prev) =>
-                                prev.includes(engine.name)
-                                  ? prev.filter((e) => e !== engine.name)
-                                  : [...prev, engine.name]
-                              );
-                            }}
-                            className={selectedEngines.includes(engine.name) ? "bg-blue-600 text-white" : ""}
-                          >
-                            {engine.name}
-                          </Button>
-                        ))}
-                      </div>
-                      <p className="text-muted-foreground text-sm mb-2">
-                        Choose which engines to use for this scan. At least one engine must be selected.
-                      </p>
-                      {engineError && (
-                        <div className="text-red-600 font-semibold mb-2">{engineError}</div>
-                      )}
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen(false)}>
-                        Close
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
               <div
                 className={`border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${
                   isDragging
                     ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20 scale-105"
                     : "border-muted-foreground/25 hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/10"
                 }`}
-                onDrop={session ? handleDrop : undefined}
-                onDragOver={session ? handleDragOver : undefined}
-                onDragLeave={session ? handleDragLeave : undefined}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
               >
                 <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20">
                   <Upload className="w-8 h-8 text-blue-600" />
                 </div>
                 <h3 className="text-2xl font-semibold mb-3">Drop your file here</h3>
                 <p className="text-muted-foreground mb-8 text-lg">Or click to browse</p>
-                <input type="file" id="file-upload" className="hidden" onChange={session ? handleFileSelect : undefined} accept="*/*" disabled={!session} />
-                <Button
-                  asChild
-                  size="lg"
-                  className="text-lg px-8 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                  disabled={advancedOpen && selectedEngines.length === 0}
-                  onClick={() => { if (!session) signIn("google") }}
-                >
-                  <label htmlFor="file-upload" className="cursor-pointer">
-                    {session ? "Choose File" : "Sign in to Scan"}
-                  </label>
-                </Button>
+                <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-4">
+                  <Button
+                    asChild
+                    size="lg"
+                    className="text-lg px-8 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                    disabled={advancedOpen && selectedEngines.length === 0}
+                    // no longer routes to sign in
+                  >
+                    <label htmlFor="file-upload" className="cursor-pointer">
+                      Choose File
+                    </label>
+                  </Button>
+                  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        className="flex items-center gap-2"
+                        aria-expanded={advancedOpen}
+                      >
+                        <Settings className="h-5 w-5" />
+                        Advanced Settings
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="center" side="bottom" sideOffset={8} className="w-96">
+                      <div className="mb-4">
+                        <h4 className="text-lg font-semibold mb-2">Select Security Engines</h4>
+                        <div className="flex flex-wrap gap-2 mb-2 max-h-64 overflow-y-auto">
+                          {engines.map((engine) => (
+                            <Button
+                              key={engine.name}
+                              variant={selectedEngines.includes(engine.name) ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => {
+                                setSelectedEngines((prev) =>
+                                  prev.includes(engine.name)
+                                    ? prev.filter((e) => e !== engine.name)
+                                    : [...prev, engine.name]
+                                );
+                              }}
+                              className={selectedEngines.includes(engine.name) ? "bg-blue-600 text-white" : ""}
+                            >
+                              {engine.name}
+                            </Button>
+                          ))}
+                        </div>
+                        <p className="text-muted-foreground text-sm mb-2">
+                          Choose which engines to use for this scan. At least one engine must be selected.
+                        </p>
+                        {engineError && (
+                          <div className="text-red-600 font-semibold mb-2">{engineError}</div>
+                        )}
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen(false)}>
+                          Close
+                        </Button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" />
               </div>
 
               <div className="mt-12 grid grid-cols-3 gap-8 text-center">
@@ -503,7 +645,7 @@ export default function ProbiumLens() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/20 dark:to-cyan-900/20">
                     <Database className="w-6 h-6 text-blue-600" />
                   </div>
-                  <span className="font-medium">10+ Engines</span>
+                  <span className="font-medium">30+ Engines</span>
                   <span className="text-sm text-muted-foreground">Comprehensive scanning</span>
                 </div>
                 <div className="flex flex-col items-center gap-3">
@@ -582,20 +724,186 @@ export default function ProbiumLens() {
                 )}
 
                 <Tabs defaultValue="details" className="w-full">
-                  <TabsList className="grid w-full grid-cols-4 h-12">
-                    <TabsTrigger value="details" className="text-base">
-                      File Details
+                  <TabsList className="grid w-full grid-cols-4 h-12 bg-gradient-to-r from-blue-100 via-purple-100 to-blue-50 dark:from-blue-900/30 dark:via-purple-900/30 dark:to-blue-900/30 rounded-xl shadow-md">
+                    {/* AI Insights first */}
+                    <TabsTrigger
+                      value="ai"
+                      onClick={fetchAiInsights}
+                      className="text-base font-semibold transition-all duration-200 ease-in-out rounded-lg mx-1 h-10 flex items-center justify-center
+                        data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white
+                        data-[state=inactive]:bg-transparent data-[state=inactive]:text-blue-700 dark:data-[state=inactive]:text-blue-200
+                        hover:bg-blue-200/60 dark:hover:bg-blue-800/40 hover:scale-105 focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                      <Eye className="w-5 h-5 mr-2 group-data-[state=active]:text-white group-data-[state=inactive]:text-blue-700 dark:group-data-[state=inactive]:text-blue-200" /> AI Insights
                     </TabsTrigger>
-                    <TabsTrigger value="detection" className="text-base">
-                      Detection Results
+                    {/* File Details second */}
+                    <TabsTrigger
+                      value="details"
+                      className="text-base font-semibold transition-all duration-200 ease-in-out rounded-lg mx-1 h-10 flex items-center justify-center
+                        data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-purple-500 data-[state=active]:text-white
+                        data-[state=inactive]:bg-transparent data-[state=inactive]:text-blue-700 dark:data-[state=inactive]:text-blue-200
+                        hover:bg-blue-200/60 dark:hover:bg-blue-800/40 hover:scale-105 focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                      <FileText className="w-5 h-5 mr-2 group-data-[state=active]:text-white group-data-[state=inactive]:text-blue-700 dark:group-data-[state=inactive]:text-blue-200" /> File Details
                     </TabsTrigger>
-                    <TabsTrigger value="behavior" className="text-base">
-                      Behavior Analysis
+                    {/* Behavior Analysis */}
+                    <TabsTrigger
+                      value="behavior"
+                      className="text-base font-semibold transition-all duration-200 ease-in-out rounded-lg mx-1 h-10 flex items-center justify-center
+                        data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-500 data-[state=active]:to-blue-500 data-[state=active]:text-white
+                        data-[state=inactive]:bg-transparent data-[state=inactive]:text-green-700 dark:data-[state=inactive]:text-green-200
+                        hover:bg-green-200/60 dark:hover:bg-green-800/40 hover:scale-105 focus-visible:ring-2 focus-visible:ring-green-400"
+                    >
+                      <Activity className="w-5 h-5 mr-2 group-data-[state=active]:text-white group-data-[state=inactive]:text-green-700 dark:group-data-[state=inactive]:text-green-200" /> Behavior Analysis
                     </TabsTrigger>
-                    <TabsTrigger value="history" className="text-base">
-                      Intelligence
+                    {/* Intelligence */}
+                    <TabsTrigger
+                      value="history"
+                      className="text-base font-semibold transition-all duration-200 ease-in-out rounded-lg mx-1 h-10 flex items-center justify-center
+                        data-[state=active]:bg-gradient-to-r data-[state=active]:from-yellow-400 data-[state=active]:to-yellow-500 data-[state=active]:text-white
+                        data-[state=inactive]:bg-transparent data-[state=inactive]:text-yellow-700 dark:data-[state=inactive]:text-yellow-200
+                        hover:bg-yellow-200/60 dark:hover:bg-yellow-800/40 hover:scale-105 focus-visible:ring-2 focus-visible:ring-yellow-400"
+                    >
+                      <Database className="w-5 h-5 mr-2 group-data-[state=active]:text-white group-data-[state=inactive]:text-yellow-600 dark:group-data-[state=inactive]:text-yellow-200" /> Intelligence
                     </TabsTrigger>
                   </TabsList>
+
+                  {/* Swap the order of TabsContent as well */}
+                  <TabsContent value="ai" className="space-y-6 mt-8">
+                    <div className="flex flex-col md:flex-row gap-8">
+                      {/* Main AI Insights Section */}
+                      <div className="flex-1 min-w-0">
+                        <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+                          <CardHeader>
+                            <CardTitle className="flex items-center gap-3 text-xl">
+                              <Eye className="w-6 h-6 text-blue-600" />
+                              AI Insights
+                            </CardTitle>
+                            <CardDescription className="text-base">
+                              Expert AI-generated analysis and recommendations for this file
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            {aiLoading ? (
+                              <div className="text-center py-8 text-lg">Generating insights...</div>
+                            ) : aiError ? (
+                              <div className="text-center text-red-600 font-semibold py-8">{aiError}</div>
+                            ) : aiInsights ? (
+                              (() => {
+                                const sections = parseAiInsights(aiInsights);
+                                return (
+                                  <div className="space-y-6">
+                                    {sections["Summary"] && (
+                                      <div>
+                                        <div className="font-semibold text-lg mb-1">Summary</div>
+                                        <div className="text-base text-gray-800 dark:text-gray-200">
+                                          {sections["Summary"].join(" ")}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {sections["Notable Findings"] && (
+                                      <div>
+                                        <div className="font-semibold text-lg mb-1">Notable Findings</div>
+                                        <ul className="list-disc pl-6 text-base text-gray-800 dark:text-gray-200">
+                                          {sections["Notable Findings"].map((item, idx) => (
+                                            <li key={idx}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div className="text-center text-muted-foreground py-8">No insights yet. Click the tab to generate AI insights.</div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </div>
+                      {/* Chatbox Sidebar */}
+                      <div className="w-full md:w-[380px] flex flex-col gap-4">
+                        <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 via-purple-50 to-blue-100 dark:from-blue-900/30 dark:via-purple-900/30 dark:to-blue-900/30">
+                          <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-lg">
+                              <Send className="h-5 w-5 text-purple-600" />
+                              Ask the AI
+                            </CardTitle>
+                            <CardDescription className="text-base">Ask custom questions about this file or tune the AI response.</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2 mb-4">
+                              <label className="block text-sm font-medium mb-1">Response Style</label>
+                              <div className="flex gap-2 items-center">
+                                <span className="text-xs text-blue-700 dark:text-blue-300">Concise</span>
+                                <Slider
+                                  min={0.2}
+                                  max={1.2}
+                                  step={0.1}
+                                  value={[chatTemperature]}
+                                  onValueChange={([v]) => setChatTemperature(v)}
+                                  className="flex-1"
+                                />
+                                <span className="text-xs text-purple-700 dark:text-purple-300">Creative</span>
+                              </div>
+                              <label className="block text-sm font-medium mt-2 mb-1">Max Length</label>
+                              <Slider
+                                min={100}
+                                max={1000}
+                                step={50}
+                                value={[chatMaxTokens]}
+                                onValueChange={([v]) => setChatMaxTokens(v)}
+                              />
+                              <div className="flex justify-between text-xs text-muted-foreground">
+                                <span>{chatMaxTokens} tokens</span>
+                                <span>~{Math.round(chatMaxTokens/4)} words</span>
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-2 h-64 overflow-y-auto bg-white/60 dark:bg-slate-900/30 rounded-lg p-3 mb-2 border">
+                              {chatMessages.length === 0 && (
+                                <div className="text-muted-foreground text-center my-auto">No conversation yet. Ask a question about this file.</div>
+                              )}
+                              {chatMessages.map((msg, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`rounded-xl px-4 py-2 mb-1 max-w-[90%] text-base whitespace-pre-line ${
+                                    msg.role === "user"
+                                      ? "bg-blue-100 dark:bg-blue-900/40 self-end text-right text-blue-900 dark:text-blue-100"
+                                      : "bg-purple-100 dark:bg-purple-900/40 self-start text-left text-purple-900 dark:text-purple-100"
+                                  }`}
+                                >
+                                  {msg.content}
+                                </div>
+                              ))}
+                              {chatLoading && (
+                                <div className="text-center text-blue-600">Thinking...</div>
+                              )}
+                              {chatError && (
+                                <div className="text-center text-red-600 font-semibold">{chatError}</div>
+                              )}
+                            </div>
+                            <form
+                              className="flex gap-2 mt-2"
+                              onSubmit={e => {
+                                e.preventDefault();
+                                sendChat();
+                              }}
+                            >
+                              <Input
+                                value={chatInput}
+                                onChange={e => setChatInput(e.target.value)}
+                                placeholder="Ask about this file..."
+                                className="flex-1 bg-white/80 dark:bg-slate-900/40"
+                                disabled={chatLoading}
+                              />
+                              <Button type="submit" size="icon" disabled={chatLoading || !chatInput.trim()} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
+                                <Send className="h-5 w-5" />
+                              </Button>
+                            </form>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  </TabsContent>
 
                   <TabsContent value="details" className="space-y-6 mt-8">
                     <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
@@ -671,117 +979,6 @@ export default function ProbiumLens() {
                               </p>
                             </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-
-                  <TabsContent value="detection" className="space-y-6 mt-8">
-                    <Card className="shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-3 text-xl">
-                          <Eye className="w-6 h-6 text-blue-600" />
-                          Security Engine Results
-                        </CardTitle>
-                        <CardDescription className="text-base">
-                          Scanned by {analysis.engines.length} leading security engines
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        {/* Threat Summary */}
-                        <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 text-center">
-                            <div className="text-3xl font-bold text-blue-600 mb-2">
-                              {analysis.engines.length}
-                            </div>
-                            <div className="text-sm font-medium text-muted-foreground">
-                              Security Engines
-                            </div>
-                          </div>
-                          <div className="p-6 rounded-xl border bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 text-center">
-                            <div className="text-3xl font-bold text-green-600 mb-2">
-                              {analysis.engines.filter(e => e.result === "clean").length}
-                            </div>
-                            <div className="text-sm font-medium text-muted-foreground">
-                              Clean Results
-                            </div>
-                          </div>
-                          <div className={`p-6 rounded-xl border ${
-                            analysis.threats > 0 
-                              ? "bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20" 
-                              : "bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900/20 dark:to-gray-800/20"
-                          } text-center`}>
-                            <div className={`text-3xl font-bold mb-2 ${
-                              analysis.threats > 0 ? "text-red-600" : "text-gray-600"
-                            }`}>
-                              {analysis.threats}
-                            </div>
-                            <div className="text-sm font-medium text-muted-foreground">
-                              Threats Detected
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Detection Results by Category */}
-                        <div className="space-y-6">
-                          <h4 className="font-semibold text-lg">Detection Results by Engine</h4>
-                          
-                          {/* Clean Results */}
-                          <div className="space-y-3">
-                            <h5 className="text-base font-medium flex items-center gap-2">
-                              <CheckCircle className="h-4 w-4 text-green-500" />
-                              Clean Results ({analysis.engines.filter(e => e.result === "clean").length})
-                            </h5>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                              {analysis.engines
-                                .filter(e => e.result === "clean")
-                                .map((engine, idx) => (
-                                  <div key={idx} className="px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/20 text-center">
-                                    <span className="text-sm font-medium">{engine.name}</span>
-                                  </div>
-                                ))}
-                            </div>
-                          </div>
-                          
-                          {/* Suspicious Results */}
-                          {analysis.engines.some(e => e.result === "suspicious") && (
-                            <div className="space-y-3">
-                              <h5 className="text-base font-medium flex items-center gap-2">
-                                <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                                Suspicious Results ({analysis.engines.filter(e => e.result === "suspicious").length})
-                              </h5>
-                              <div className="grid grid-cols-1 gap-3">
-                                {analysis.engines
-                                  .filter(e => e.result === "suspicious")
-                                  .map((engine, idx) => (
-                                    <div key={idx} className="p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-100 dark:border-yellow-900/20">
-                                      <div className="font-medium">{engine.name}</div>
-                                      {engine.details && <div className="text-sm mt-1 text-muted-foreground">{engine.details}</div>}
-                                    </div>
-                                  ))}
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Threat Results */}
-                          {analysis.engines.some(e => e.result === "threat") && (
-                            <div className="space-y-3">
-                              <h5 className="text-base font-medium flex items-center gap-2">
-                                <AlertTriangle className="h-4 w-4 text-red-500" />
-                                Threat Results ({analysis.engines.filter(e => e.result === "threat").length})
-                              </h5>
-                              <div className="grid grid-cols-1 gap-3">
-                                {analysis.engines
-                                  .filter(e => e.result === "threat")
-                                  .map((engine, idx) => (
-                                    <div key={idx} className="p-3 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20">
-                                      <div className="font-medium">{engine.name}</div>
-                                      {engine.details && <div className="text-sm mt-1 text-muted-foreground">{engine.details}</div>}
-                                    </div>
-                                  ))}
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </CardContent>
                     </Card>
