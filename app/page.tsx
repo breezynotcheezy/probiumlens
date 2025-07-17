@@ -38,9 +38,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { LoginModal } from "@/components/login-modal"
-import { scanFile } from "@/lib/probium";
+import { scanFile, getEngines } from "@/lib/probium";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 interface FileAnalysis {
   fileName: string;
@@ -68,6 +70,24 @@ export default function ProbiumLens() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const [engines, setEngines] = useState<{ name: string; result: "clean" | "threat" | "suspicious" }[]>([]);
+  const [selectedEngines, setSelectedEngines] = useState<string[]>([]);
+  const [engineError, setEngineError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Fetch available engines on mount
+  useEffect(() => {
+    getEngines().then((data) => {
+      if (Array.isArray(data)) setEngines(data);
+      else if (Array.isArray(data.engines)) setEngines(data.engines);
+    });
+  }, []);
+
+  // Helper to check if file type is supported by selected engines (mock logic)
+  const isFileTypeSupported = (fileType: string) => {
+    // For demo, assume all engines support all types except if none selected
+    return selectedEngines.length > 0;
+  };
 
   // Remove any forced login screen or blocking logic
   // Always render the main UI below
@@ -117,6 +137,11 @@ export default function ProbiumLens() {
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (files && files.length > 0) {
+        if (!isFileTypeSupported(files[0].type)) {
+          setEngineError("UNSAFE / NO ENGINE / UNKNOWN: This file type is not supported by the selected engines.");
+          return;
+        }
+        setEngineError(null);
         setLoading(true);
         setAnalysis({
           fileName: files[0].name,
@@ -131,7 +156,7 @@ export default function ProbiumLens() {
         });
         try {
           const idToken = (session as any)?.id_token;
-          const res = await scanFile(files[0], {}, idToken);
+          const res = await scanFile(files[0], { engines: selectedEngines.join(",") }, idToken);
           if (res.success && res.result) {
             const parsed = parseScanResult(res.result);
             setAnalysis(parsed);
@@ -167,7 +192,7 @@ export default function ProbiumLens() {
         setLoading(false);
       }
     },
-    [session]
+    [session, selectedEngines]
   );
 
   const handleDrop = useCallback(
@@ -293,10 +318,10 @@ export default function ProbiumLens() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
       <header className="border-b bg-white/90 backdrop-blur-md shadow-sm dark:bg-slate-900/90">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto flex h-16 items-center justify-between pl-0 pr-4 sm:pr-6 lg:pr-8">
+          <div className="flex items-center gap-3 -ml-2">
             {/* Removed Eye icon from top left */}
-            <div>
+            <div className="pl-0">
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 Probium Lens
               </h1>
@@ -307,6 +332,17 @@ export default function ProbiumLens() {
           <div className="flex items-center gap-4">
             {session ? (
               <div className="flex items-center gap-2">
+                {session && analysis ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
+                    onClick={() => setAnalysis(null)}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Scan a File
+                  </Button>
+                ) : null}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -356,7 +392,7 @@ export default function ProbiumLens() {
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Hero Section */}
         <div className="text-center mb-12">
           <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg">
@@ -374,29 +410,83 @@ export default function ProbiumLens() {
           /* Upload Area */
           <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-white/80 backdrop-blur-sm">
             <CardContent className="p-12">
+              {/* Advanced Settings Popover */}
+              <div className="flex justify-center mb-8">
+                <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex items-center gap-2"
+                      aria-expanded={advancedOpen}
+                      disabled={!session}
+                    >
+                      <Settings className="h-4 w-4" />
+                      Advanced Settings
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="center" side="bottom" sideOffset={8} className="w-96">
+                    <div className="mb-4">
+                      <h4 className="text-lg font-semibold mb-2">Select Security Engines</h4>
+                      <div className="flex flex-wrap gap-2 mb-2 max-h-64 overflow-y-auto">
+                        {engines.map((engine) => (
+                          <Button
+                            key={engine.name}
+                            variant={selectedEngines.includes(engine.name) ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => {
+                              setSelectedEngines((prev) =>
+                                prev.includes(engine.name)
+                                  ? prev.filter((e) => e !== engine.name)
+                                  : [...prev, engine.name]
+                              );
+                            }}
+                            className={selectedEngines.includes(engine.name) ? "bg-blue-600 text-white" : ""}
+                          >
+                            {engine.name}
+                          </Button>
+                        ))}
+                      </div>
+                      <p className="text-muted-foreground text-sm mb-2">
+                        Choose which engines to use for this scan. At least one engine must be selected.
+                      </p>
+                      {engineError && (
+                        <div className="text-red-600 font-semibold mb-2">{engineError}</div>
+                      )}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen(false)}>
+                        Close
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
               <div
                 className={`border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${
                   isDragging
                     ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20 scale-105"
                     : "border-muted-foreground/25 hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/10"
                 }`}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
+                onDrop={session ? handleDrop : undefined}
+                onDragOver={session ? handleDragOver : undefined}
+                onDragLeave={session ? handleDragLeave : undefined}
               >
                 <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20">
                   <Upload className="w-8 h-8 text-blue-600" />
                 </div>
                 <h3 className="text-2xl font-semibold mb-3">Drop your file here</h3>
                 <p className="text-muted-foreground mb-8 text-lg">Or click to browse</p>
-                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" />
+                <input type="file" id="file-upload" className="hidden" onChange={session ? handleFileSelect : undefined} accept="*/*" disabled={!session} />
                 <Button
                   asChild
                   size="lg"
                   className="text-lg px-8 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                  disabled={advancedOpen && selectedEngines.length === 0}
+                  onClick={() => { if (!session) signIn("google") }}
                 >
                   <label htmlFor="file-upload" className="cursor-pointer">
-                    Choose File
+                    {session ? "Choose File" : "Sign in to Scan"}
                   </label>
                 </Button>
               </div>

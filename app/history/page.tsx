@@ -41,6 +41,7 @@ import {
   Search,
   SlidersHorizontal,
   Trash2,
+  Upload,
 } from "lucide-react"
 import { format } from "date-fns"
 
@@ -199,7 +200,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="max-w-0xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <Card className="shadow-xl border-0 bg-white/80 backdrop-blur-sm">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -209,17 +210,28 @@ export default function HistoryPage() {
                 View and manage your file scan history
               </CardDescription>
             </div>
-            {history.length > 0 && (
+            <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleClearHistory}
-                className="text-red-500 border-red-200 hover:bg-red-50"
+                onClick={() => router.push("/")}
+                className="flex items-center gap-2"
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Clear History
+                <Upload className="h-4 w-4" />
+                Scan a File
               </Button>
-            )}
+              {history.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearHistory}
+                  className="text-red-500 border-red-200 hover:bg-red-50"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Clear History
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
