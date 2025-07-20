@@ -1,6 +1,6 @@
 "use client"
 
-import type React from "react"
+import * as React from "react"
 
 import { useState, useCallback, useEffect } from "react"
 import {
@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Globe,
   Activity,
+  Folder,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -38,7 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { LoginModal } from "@/components/login-modal"
-import { scanFile, getEngines } from "@/lib/probium";
+import { scanFile, scanBatch, getEngines } from "@/lib/probium";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
@@ -65,6 +66,15 @@ interface FileAnalysis {
   error?: string;
 }
 
+// 1. Update FileAnalysis to support tree structure for folders
+interface FileNode {
+  name: string;
+  path: string;
+  isFolder: boolean;
+  children?: FileNode[];
+  analysis?: FileAnalysis;
+}
+
 export default function ProbiumLens() {
   const { data: session, status } = useSession();
   const [analysis, setAnalysis] = useState<FileAnalysis | null>(null);
@@ -86,6 +96,14 @@ export default function ProbiumLens() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatTemperature, setChatTemperature] = useState(0.6);
   const [chatMaxTokens, setChatMaxTokens] = useState(400);
+
+  // 2. Refactor state for multi-file/folder support
+  const [fileTree, setFileTree] = useState<FileNode[] | null>(null);
+  const [scanResults, setScanResults] = useState<FileAnalysis[] | null>(null);
+  const [selectedFile, setSelectedFile] = useState<FileAnalysis | null>(null);
+
+  // 1. Add state for upload error
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Fetch available engines on mount
   useEffect(() => {
@@ -266,125 +284,126 @@ export default function ProbiumLens() {
     setAiLoading(false);
   }, [analysis, session]);
 
+  // 3. Helper to recursively collect files from folders (for drag/drop and input)
+  async function collectFilesFromDataTransfer(items: DataTransferItemList): Promise<File[]> {
+    const files: File[] = [];
+    async function traverse(item: any, path = "") {
+      if (item.isFile) {
+        const file = await new Promise<File>((resolve) => item.file(resolve));
+        (file as any)['relativePath'] = path + file.name;
+        files.push(file);
+      } else if (item.isDirectory) {
+        const dirReader = item.createReader();
+        await new Promise<void>((resolve) => {
+          dirReader.readEntries(async (entries: any[]) => {
+            for (const entry of entries) {
+              await traverse(entry, path + item.name + "/");
+            }
+            resolve();
+          });
+        });
+      }
+    }
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry();
+      if (entry) await traverse(entry);
+    }
+    return files;
+  }
+
+  // 2. Separate file and folder input refs
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const folderInputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    if (folderInputRef.current) {
+      folderInputRef.current.setAttribute('webkitdirectory', '');
+    }
+  }, []);
+
+  // 3. New handler for folder input
+  const handleFolderSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        setLoading(true);
+        setScanResults(null);
+        setFileTree(null);
+        setSelectedFile(null);
+        setUploadError(null);
+        const fileArr = Array.from(files);
+        try {
+          const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+          if (res.success && Array.isArray(res.results)) {
+            setScanResults(res.results.map(parseScanResult));
+            // TODO: Build fileTree from fileArr and results
+          } else {
+            setUploadError(res.detail || "Scan failed.");
+          }
+        } catch (err: any) {
+          setUploadError(err?.message || "Scan failed.");
+        }
+        setLoading(false);
+      }
+    },
+    [selectedEngines]
+  );
+
+  // 4. Update handleFileSelect to clear uploadError and only send file objects
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files;
       if (files && files.length > 0) {
-        if (!isFileTypeSupported(files[0].type)) {
-          setEngineError("UNSAFE / NO ENGINE / UNKNOWN: This file type is not supported by the selected engines.");
-          return;
-        }
-        setEngineError(null);
         setLoading(true);
-        setAnalysis({
-          fileName: files[0].name,
-          fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-          fileType: files[0].type || "Unknown",
-          uploadTime: new Date().toLocaleString(),
-          scanProgress: 0,
-          status: "uploading",
-          threats: 0,
-          engines: [],
-          metadata: {},
-        });
+        setScanResults(null);
+        setFileTree(null);
+        setSelectedFile(null);
+        setUploadError(null);
+        const fileArr = Array.from(files);
         try {
-          const idToken = (session as any)?.id_token;
-          const res = await scanFile(files[0], { engines: selectedEngines.join(",") }, idToken);
-          if (res.success && res.result) {
-            const parsed = parseScanResult(res.result);
-            setAnalysis(parsed);
-            saveScanToHistory(parsed, null); // No AI insight for initial scan
+          const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+          if (res.success && Array.isArray(res.results)) {
+            setScanResults(res.results.map(parseScanResult));
+            // TODO: Build fileTree from fileArr and results
           } else {
-            setAnalysis({
-              fileName: files[0].name,
-              fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-              fileType: files[0].type || "Unknown",
-              uploadTime: new Date().toLocaleString(),
-              scanProgress: 100,
-              status: "error",
-              threats: 0,
-              engines: [],
-              metadata: {},
-              error: res.detail || "Scan failed."
-            });
+            setUploadError(res.detail || "Scan failed.");
           }
         } catch (err: any) {
-          setAnalysis({
-            fileName: files[0].name,
-            fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-            fileType: files[0].type || "Unknown",
-            uploadTime: new Date().toLocaleString(),
-            scanProgress: 100,
-            status: "error",
-            threats: 0,
-            engines: [],
-            metadata: {},
-            error: err?.message || "Scan failed."
-          });
+          setUploadError(err?.message || "Scan failed.");
         }
         setLoading(false);
       }
     },
-    [session, selectedEngines]
+    [selectedEngines]
   );
 
+  // 5. Update handleDrop to support folders
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      const files = Array.from(e.dataTransfer.files);
-      if (files.length > 0) {
-        setLoading(true);
-        setAnalysis({
-          fileName: files[0].name,
-          fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-          fileType: files[0].type || "Unknown",
-          uploadTime: new Date().toLocaleString(),
-          scanProgress: 0,
-          status: "uploading",
-          threats: 0,
-          engines: [],
-          metadata: {},
-        });
-        try {
-          const idToken = (session as any)?.id_token;
-          const res = await scanFile(files[0], {}, idToken);
-          if (res.success && res.result) {
-            const parsed = parseScanResult(res.result);
-            setAnalysis(parsed);
-            saveScanToHistory(parsed, null); // No AI insight for initial scan
-          } else {
-            setAnalysis({
-              fileName: files[0].name,
-              fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-              fileType: files[0].type || "Unknown",
-              uploadTime: new Date().toLocaleString(),
-              scanProgress: 100,
-              status: "error",
-              threats: 0,
-              engines: [],
-              metadata: {},
-              error: res.detail || "Scan failed."
-            });
-          }
-        } catch (err: any) {
-          setAnalysis({
-            fileName: files[0].name,
-            fileSize: `${(files[0].size / 1024 / 1024).toFixed(2)} MB`,
-            fileType: files[0].type || "Unknown",
-            uploadTime: new Date().toLocaleString(),
-            scanProgress: 100,
-            status: "error",
-            threats: 0,
-            engines: [],
-            metadata: {},
-            error: err?.message || "Scan failed."
-          });
-        }
-        setLoading(false);
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      let files: File[] = [];
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        files = await collectFilesFromDataTransfer(e.dataTransfer.items);
+      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        files = Array.from(e.dataTransfer.files);
       }
+      if (files.length > 0) {
+        const idToken = (session as any)?.id_token;
+        const res = await scanBatch(files, { engines: selectedEngines.join(",") });
+        if (res.success && Array.isArray(res.results)) {
+          setScanResults(res.results.map(parseScanResult));
+          // TODO: Build fileTree from files and results
+        } else {
+          // handle error
+        }
+      }
+      setLoading(false);
     },
-    [session]
+    [session, selectedEngines]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -554,83 +573,51 @@ export default function ProbiumLens() {
           /* Upload Area */
           <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-white/80 backdrop-blur-sm">
             <CardContent className="p-12">
-              <div
-                className={`border-2 border-dashed rounded-2xl p-16 text-center transition-all duration-300 ${
-                  isDragging
-                    ? "border-blue-500 bg-blue-50 dark:bg-blue-950/20 scale-105"
-                    : "border-muted-foreground/25 hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/10"
-                }`}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-              >
+              {/* Replace the upload area with a perfectly aligned, user-friendly, and responsive layout */}
+              <div className="flex flex-col items-center justify-center w-full">
                 <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20">
                   <Upload className="w-8 h-8 text-blue-600" />
                 </div>
-                <h3 className="text-2xl font-semibold mb-3">Drop your file here</h3>
-                <p className="text-muted-foreground mb-8 text-lg">Or click to browse</p>
-                <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-4">
+                <h3 className="text-2xl font-semibold mb-2 text-center">Drop your file here</h3>
+                <p className="text-muted-foreground mb-8 text-lg text-center">Or click to browse</p>
+                <div className="flex flex-col sm:flex-row gap-4 w-full max-w-2xl justify-center items-center mb-2">
                   <Button
                     asChild
                     size="lg"
-                    className="text-lg px-8 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus-visible:ring-2 focus-visible:ring-blue-400"
                     disabled={advancedOpen && selectedEngines.length === 0}
-                    // no longer routes to sign in
                   >
-                    <label htmlFor="file-upload" className="cursor-pointer">
-                      Choose File
+                    <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
+                      <Upload className="w-6 h-6" />
+                      <span className="font-medium">Choose Files</span>
                     </label>
                   </Button>
-                  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="lg"
-                        className="flex items-center gap-2"
-                        aria-expanded={advancedOpen}
-                      >
-                        <Settings className="h-5 w-5" />
-                        Advanced Settings
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="center" side="bottom" sideOffset={8} className="w-96">
-                      <div className="mb-4">
-                        <h4 className="text-lg font-semibold mb-2">Select Security Engines</h4>
-                        <div className="flex flex-wrap gap-2 mb-2 max-h-64 overflow-y-auto">
-                          {engines.map((engine) => (
-                            <Button
-                              key={engine.name}
-                              variant={selectedEngines.includes(engine.name) ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => {
-                                setSelectedEngines((prev) =>
-                                  prev.includes(engine.name)
-                                    ? prev.filter((e) => e !== engine.name)
-                                    : [...prev, engine.name]
-                                );
-                              }}
-                              className={selectedEngines.includes(engine.name) ? "bg-blue-600 text-white" : ""}
-                            >
-                              {engine.name}
-                            </Button>
-                          ))}
-                        </div>
-                        <p className="text-muted-foreground text-sm mb-2">
-                          Choose which engines to use for this scan. At least one engine must be selected.
-                        </p>
-                        {engineError && (
-                          <div className="text-red-600 font-semibold mb-2">{engineError}</div>
-                        )}
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen(false)}>
-                          Close
-                        </Button>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                  <Button
+                    asChild
+                    size="lg"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 focus-visible:ring-2 focus-visible:ring-green-400"
+                    disabled={advancedOpen && selectedEngines.length === 0}
+                  >
+                    <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
+                      <Folder className="w-6 h-6" />
+                      <span className="font-medium">Choose Folder</span>
+                    </label>
+                  </Button>
+                  <Button
+                    asChild
+                    size="lg"
+                    variant="outline"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-white hover:bg-gray-100 border border-gray-300 focus-visible:ring-2 focus-visible:ring-gray-400"
+                    aria-expanded={advancedOpen}
+                  >
+                    <label className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
+                      <Settings className="h-5 w-5" />
+                      <span className="text-sm font-medium">Advanced Settings</span>
+                    </label>
+                  </Button>
                 </div>
-                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" />
+                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple ref={fileInputRef} />
+                <input type="file" id="folder-upload" className="hidden" onChange={handleFolderSelect} multiple ref={folderInputRef} />
               </div>
 
               <div className="mt-12 grid grid-cols-3 gap-8 text-center">
@@ -656,6 +643,9 @@ export default function ProbiumLens() {
                   <span className="text-sm text-muted-foreground">Files never stored</span>
                 </div>
               </div>
+              {uploadError && (
+                <div className="text-red-600 font-semibold text-center mt-4">{uploadError}</div>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -723,7 +713,7 @@ export default function ProbiumLens() {
                   </Alert>
                 )}
 
-                <Tabs defaultValue="details" className="w-full">
+                <Tabs defaultValue="ai" className="w-full">
                   <TabsList className="grid w-full grid-cols-4 h-12 bg-gradient-to-r from-blue-100 via-purple-100 to-blue-50 dark:from-blue-900/30 dark:via-purple-900/30 dark:to-blue-900/30 rounded-xl shadow-md">
                     {/* AI Insights first */}
                     <TabsTrigger
