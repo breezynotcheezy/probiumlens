@@ -50,6 +50,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
 import { Send } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface FileAnalysis {
   fileName: string;
@@ -108,6 +109,50 @@ export default function ProbiumLens() {
 
   // 1. Add state for upload error
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // 4. Update fetchAiInsights to cache result per scan
+  const fetchAiInsights = useCallback(async () => {
+    if (!analysis) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiInsights(null);
+    const scanKey = getScanKey(analysis);
+    // Check cache first
+    if (scanKey) {
+      const cached = localStorage.getItem(`probium_ai_${scanKey}`);
+      if (cached) {
+        setAiInsights(cached);
+        setAiLoading(false);
+        return;
+      }
+    }
+    try {
+      const res = await fetch("/api/ai-insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scanData: analysis }),
+      });
+      const data = await res.json();
+      if (data.insights) {
+        setAiInsights(data.insights);
+        // Cache it
+        if (scanKey) localStorage.setItem(`probium_ai_${scanKey}`, data.insights);
+        // Also update history with AI insight
+        saveScanToHistory(analysis, data.insights);
+      } else setAiError(data.error || "No insights available.");
+    } catch (err: any) {
+      setAiError(err?.message || "Failed to fetch AI insights.");
+    }
+    setAiLoading(false);
+  }, [analysis, session]);
+
+  // 1. Automatically trigger fetchAiInsights when a scan completes and the AI Insights tab is active
+  const [activeTab, setActiveTab] = useState("ai");
+  useEffect(() => {
+    if (analysis && activeTab === "ai") {
+      fetchAiInsights();
+    }
+  }, [analysis, activeTab, fetchAiInsights]);
 
   // Fetch available engines on mount
   useEffect(() => {
@@ -252,205 +297,6 @@ export default function ProbiumLens() {
     setChatLoading(false);
   };
 
-  // 4. Update fetchAiInsights to cache result per scan
-  const fetchAiInsights = useCallback(async () => {
-    if (!analysis) return;
-    setAiLoading(true);
-    setAiError(null);
-    setAiInsights(null);
-    const scanKey = getScanKey(analysis);
-    // Check cache first
-    if (scanKey) {
-      const cached = localStorage.getItem(`probium_ai_${scanKey}`);
-      if (cached) {
-        setAiInsights(cached);
-        setAiLoading(false);
-        return;
-      }
-    }
-    try {
-      const res = await fetch("/api/ai-insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scanData: analysis }),
-      });
-      const data = await res.json();
-      if (data.insights) {
-        setAiInsights(data.insights);
-        // Cache it
-        if (scanKey) localStorage.setItem(`probium_ai_${scanKey}`, data.insights);
-        // Also update history with AI insight
-        saveScanToHistory(analysis, data.insights);
-      } else setAiError(data.error || "No insights available.");
-    } catch (err: any) {
-      setAiError(err?.message || "Failed to fetch AI insights.");
-    }
-    setAiLoading(false);
-  }, [analysis, session]);
-
-  // 3. Helper to recursively collect files from folders (for drag/drop and input)
-  async function collectFilesFromDataTransfer(items: DataTransferItemList): Promise<File[]> {
-    const files: File[] = [];
-    async function traverse(item: any, path = "") {
-      if (item.isFile) {
-        const file = await new Promise<File>((resolve) => item.file(resolve));
-        (file as any)['relativePath'] = path + file.name;
-        files.push(file);
-      } else if (item.isDirectory) {
-        const dirReader = item.createReader();
-        await new Promise<void>((resolve) => {
-          dirReader.readEntries(async (entries: any[]) => {
-            for (const entry of entries) {
-              await traverse(entry, path + item.name + "/");
-            }
-            resolve();
-          });
-        });
-      }
-    }
-    for (let i = 0; i < items.length; i++) {
-      const entry = items[i].webkitGetAsEntry();
-      if (entry) await traverse(entry);
-    }
-    return files;
-  }
-
-  // 2. Separate file and folder input refs
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const folderInputRef = React.useRef<HTMLInputElement>(null);
-  React.useEffect(() => {
-    if (folderInputRef.current) {
-      folderInputRef.current.setAttribute('webkitdirectory', '');
-    }
-  }, []);
-
-  // Add a debug state for file input
-  console.log('rendered file input', fileInputRef.current);
-  console.log('rendered folder input', folderInputRef.current);
-
-  // Add a visible debug button to trigger the file input directly
-  // Restore drag and drop handlers
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      setLoading(true);
-      setScanResults(null);
-      setFileTree(null);
-      setSelectedFile(null);
-      let files: File[] = [];
-      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-        files = await collectFilesFromDataTransfer(e.dataTransfer.items);
-      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        files = Array.from(e.dataTransfer.files);
-      }
-      if (files.length > 0) {
-        const idToken = (session as any)?.id_token;
-        const res = await scanBatch(files, { engines: selectedEngines.join(",") });
-        if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
-          setScanResults(parsedResults);
-          setAnalysis(parsedResults[0]); // Show first result in UI
-          // TODO: Build fileTree from files and results
-        } else {
-          // handle error
-        }
-      }
-      setLoading(false);
-    },
-    [session, selectedEngines]
-  );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  }, []);
-
-  const handleFileSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      console.log('handleFileSelect triggered, files:', files);
-      if (!files) {
-        console.log('No files object on event');
-        return;
-      }
-      if (files.length === 0) {
-        console.log('Files object is empty');
-        return;
-      }
-      setLoading(true);
-      setScanResults(null);
-      setFileTree(null);
-      setSelectedFile(null);
-      setUploadError(null);
-      const fileArr = Array.from(files);
-      console.log('fileArr:', fileArr);
-      try {
-        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-        console.log('Scan response:', res); // Log the response
-        if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
-          setScanResults(parsedResults);
-          setAnalysis(parsedResults[0]); // Show first result in UI
-          console.log('Scan results set:', res.results);
-        } else {
-          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
-          console.log('Scan failed, raw response:', res);
-        }
-      } catch (err: any) {
-        console.error('Scan error:', err); // Log any errors
-        setUploadError(err?.message || "Scan failed.");
-      }
-      setLoading(false);
-    },
-    [selectedEngines]
-  );
-
-  const handleFolderSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      console.log('handleFolderSelect triggered, files:', files);
-      if (!files) {
-        console.log('No files object on event');
-        return;
-      }
-      if (files.length === 0) {
-        console.log('Files object is empty');
-        return;
-      }
-      setLoading(true);
-      setScanResults(null);
-      setFileTree(null);
-      setSelectedFile(null);
-      setUploadError(null);
-      const fileArr = Array.from(files);
-      console.log('fileArr:', fileArr);
-      try {
-        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-        console.log('Scan response:', res); // Log the response
-        if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
-          setScanResults(parsedResults);
-          setAnalysis(parsedResults[0]); // Show first result in UI
-          console.log('Scan results set:', res.results);
-        } else {
-          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
-          console.log('Scan failed, raw response:', res);
-        }
-      } catch (err: any) {
-        console.error('Scan error:', err); // Log any errors
-        setUploadError(err?.message || "Scan failed.");
-      }
-      setLoading(false);
-    },
-    [selectedEngines]
-  );
-
   const handleLogin = (userData: any) => {
     setUser(userData);
     localStorage.setItem("probiumUser", JSON.stringify(userData));
@@ -474,11 +320,114 @@ export default function ProbiumLens() {
     }
   };
 
+  // Engines popover redesign
+  const [engineSearch, setEngineSearch] = useState("");
+  const filteredEngines = engines.filter(engine =>
+    engine.name.toLowerCase().includes(engineSearch.toLowerCase())
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      let files: File[] = [];
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        files = await collectFilesFromDataTransfer(e.dataTransfer.items);
+      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        files = Array.from(e.dataTransfer.files);
+      }
+      if (files.length > 0) {
+        const idToken = (session as any)?.id_token;
+        const res = await scanBatch(files, { engines: selectedEngines.join(",") });
+        if (res.success && Array.isArray(res.results)) {
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]);
+        }
+      }
+      setLoading(false);
+    },
+    [session, selectedEngines]
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const folderInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files) return;
+      if (files.length === 0) return;
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      setUploadError(null);
+      const fileArr = Array.from(files);
+      try {
+        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+        if (res.success && Array.isArray(res.results)) {
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]);
+        } else {
+          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
+        }
+      } catch (err: any) {
+        setUploadError(err?.message || "Scan failed.");
+      }
+      setLoading(false);
+    },
+    [selectedEngines]
+  );
+
+  const handleFolderSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files) return;
+      if (files.length === 0) return;
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      setUploadError(null);
+      const fileArr = Array.from(files);
+      try {
+        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+        if (res.success && Array.isArray(res.results)) {
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]);
+        } else {
+          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
+        }
+      } catch (err: any) {
+        setUploadError(err?.message || "Scan failed.");
+      }
+      setLoading(false);
+    },
+    [selectedEngines]
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
-      <header className="border-b shadow-lg bg-white/70 backdrop-blur-xl backdrop-saturate-150 sticky top-0 z-50">
-        <div className="w-full flex items-center justify-between px-6 py-3" style={{boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)', borderRadius: '0 0 2rem 2rem'}}>
+      <header className="w-full flex justify-center py-4 bg-transparent">
+        <div className="w-full max-w-5xl flex items-center justify-between px-8 py-3 bg-white/70 backdrop-blur-xl rounded-full shadow-lg border border-blue-100">
           <div className="flex items-center gap-8">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent tracking-tight">Probium Lens</h1>
             <nav className="flex gap-4">
@@ -710,11 +659,19 @@ export default function ProbiumLens() {
         <Sliders className="h-5 w-5" />
         Select Engines
       </div>
+      <input
+        type="text"
+        value={engineSearch}
+        onChange={e => setEngineSearch(e.target.value)}
+        placeholder="Search engines..."
+        className="w-full mb-3 px-3 py-2 rounded border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-base"
+        aria-label="Search engines"
+      />
       <div className="max-h-64 overflow-y-auto grid grid-cols-2 gap-3">
-        {engines.length === 0 ? (
-          <div className="col-span-2 text-center text-muted-foreground">No engines available.</div>
+        {filteredEngines.length === 0 ? (
+          <div className="col-span-2 text-center text-muted-foreground">No engines match your search.</div>
         ) : (
-          engines.map((engine, idx) => (
+          filteredEngines.map((engine, idx) => (
             <label key={engine.name || idx} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30">
               <input
                 type="checkbox"
@@ -746,30 +703,6 @@ export default function ProbiumLens() {
 </div>
                 <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple ref={fileInputRef} />
                 <input type="file" id="folder-upload" className="hidden" onChange={handleFolderSelect} multiple ref={folderInputRef} />
-              </div>
-
-              <div className="my-4 flex flex-col items-center">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 bg-yellow-200 text-yellow-900 rounded font-bold mb-2"
-                >
-                  DEBUG: Open File Picker
-                </button>
-                <button
-                  onClick={() => folderInputRef.current?.click()}
-                  className="px-4 py-2 bg-yellow-200 text-yellow-900 rounded font-bold"
-                >
-                  DEBUG: Open Folder Picker
-                </button>
-              </div>
-
-              <div className="bg-gray-100 border border-gray-300 rounded p-4 my-4 text-xs text-left max-w-2xl mx-auto">
-                <div><b>DEBUG STATE</b></div>
-                <div>fileInputRef: {String(!!fileInputRef.current)}</div>
-                <div>folderInputRef: {String(!!folderInputRef.current)}</div>
-                <div>loading: {String(loading)}</div>
-                <div>uploadError: {uploadError ? uploadError : 'None'}</div>
-                <div>scanResults: {scanResults ? JSON.stringify(scanResults, null, 2) : 'None'}</div>
               </div>
 
               <div className="mt-12 grid grid-cols-3 gap-8 text-center">
@@ -861,6 +794,12 @@ export default function ProbiumLens() {
               )}
             </Card>
 
+            {analysis && selectedEngines.length > 0 && !isFileTypeSupported(analysis.fileType) && (
+              <div className="my-4 p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded">
+                <strong>Warning:</strong> The scanned file type <span className="font-mono">{analysis.fileType}</span> is not supported by any of the selected engines. Results may be incomplete or unavailable.
+              </div>
+            )}
+
             {analysis.status === "complete" && (
               <>
                 {/* Threat Alert */}
@@ -874,7 +813,7 @@ export default function ProbiumLens() {
                   </Alert>
                 )}
 
-                <Tabs defaultValue="ai" className="w-full">
+                <Tabs defaultValue="ai" value={activeTab} onValueChange={setActiveTab} className="w-full">
                   <TabsList className="grid w-full grid-cols-4 h-12 bg-gradient-to-r from-blue-100 via-purple-100 to-blue-50 dark:from-blue-900/30 dark:via-purple-900/30 dark:to-blue-900/30 rounded-xl shadow-md">
                     {/* AI Insights first */}
                     <TabsTrigger
@@ -1149,47 +1088,48 @@ export default function ProbiumLens() {
                       <CardContent>
                         <div className="space-y-8">
                           {/* File System Activity */}
-                          <div className="space-y-4">
+                          <div>
                             <h4 className="text-lg font-semibold flex items-center gap-2">
                               <FileText className="h-5 w-5 text-blue-600" />
                               File System Activity
+                              <span className="ml-1 text-blue-400 cursor-help" title="Tracks file creation, modification, and deletion events.">?</span>
                             </h4>
                             <div className="grid gap-4">
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
                                 <div className="flex items-center gap-3">
                                   <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                  <span className="font-medium">Creates Files</span>
+                                  <span className="font-medium">Files Created</span>
                                 </div>
-                                <Badge variant={analysis.behaviorAnalysis?.fileCreation ? "destructive" : "default"} className="text-sm px-3 py-1">
-                                  {analysis.behaviorAnalysis?.fileCreation ? "Yes" : "No"}
+                                <Badge variant={analysis.behaviorAnalysis?.filesCreated ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.filesCreated ?? 0}
                                 </Badge>
                               </div>
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
                                 <div className="flex items-center gap-3">
                                   <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                  <span className="font-medium">Modifies Files</span>
+                                  <span className="font-medium">Files Modified</span>
                                 </div>
-                                <Badge variant={analysis.behaviorAnalysis?.fileModification ? "destructive" : "default"} className="text-sm px-3 py-1">
-                                  {analysis.behaviorAnalysis?.fileModification ? "Yes" : "No"}
+                                <Badge variant={analysis.behaviorAnalysis?.filesModified ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.filesModified ?? 0}
                                 </Badge>
                               </div>
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
                                 <div className="flex items-center gap-3">
                                   <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                  <span className="font-medium">Deletes Files</span>
+                                  <span className="font-medium">Files Deleted</span>
                                 </div>
-                                <Badge variant={analysis.behaviorAnalysis?.fileDeletion ? "destructive" : "default"} className="text-sm px-3 py-1">
-                                  {analysis.behaviorAnalysis?.fileDeletion ? "Yes" : "No"}
+                                <Badge variant={analysis.behaviorAnalysis?.filesDeleted ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.filesDeleted ?? 0}
                                 </Badge>
                               </div>
                             </div>
                           </div>
-                          
                           {/* Network Activity */}
-                          <div className="space-y-4">
+                          <div>
                             <h4 className="text-lg font-semibold flex items-center gap-2">
                               <Globe className="h-5 w-5 text-blue-600" />
                               Network Activity
+                              <span className="ml-1 text-blue-400 cursor-help" title="Tracks outbound connections, data exfiltration, and C2 activity.">?</span>
                             </h4>
                             <div className="grid gap-4">
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
@@ -1197,8 +1137,17 @@ export default function ProbiumLens() {
                                   <div className="w-2 h-2 rounded-full bg-blue-500"></div>
                                   <span className="font-medium">Outbound Connections</span>
                                 </div>
-                                <Badge variant={analysis.behaviorAnalysis?.networkActivity ? "destructive" : "default"} className="text-sm px-3 py-1">
-                                  {analysis.behaviorAnalysis?.networkActivity ? "Yes" : "No"}
+                                <Badge variant={analysis.behaviorAnalysis?.outboundConnections ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.outboundConnections ?? 0}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                  <span className="font-medium">Unique IPs/Domains</span>
+                                </div>
+                                <Badge variant={analysis.behaviorAnalysis?.uniqueEndpoints ? "destructive" : "default"} className="text-sm px-3 py-1">
+                                  {analysis.behaviorAnalysis?.uniqueEndpoints ?? 0}
                                 </Badge>
                               </div>
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
@@ -1210,23 +1159,14 @@ export default function ProbiumLens() {
                                   {analysis.behaviorAnalysis?.dataExfiltration ? "Yes" : "No"}
                                 </Badge>
                               </div>
-                              <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                                  <span className="font-medium">Command & Control</span>
-                                </div>
-                                <Badge variant={analysis.behaviorAnalysis?.commandAndControl ? "destructive" : "default"} className="text-sm px-3 py-1">
-                                  {analysis.behaviorAnalysis?.commandAndControl ? "Yes" : "No"}
-                                </Badge>
-                              </div>
                             </div>
                           </div>
-                          
                           {/* System Modifications */}
-                          <div className="space-y-4">
+                          <div>
                             <h4 className="text-lg font-semibold flex items-center gap-2">
                               <Settings className="h-5 w-5 text-blue-600" />
                               System Modifications
+                              <span className="ml-1 text-blue-400 cursor-help" title="Tracks registry changes, process creation, and persistence mechanisms.">?</span>
                             </h4>
                             <div className="grid gap-4">
                               <div className="flex items-center justify-between p-4 rounded-xl border bg-white/50 dark:bg-slate-800/50">
@@ -1258,12 +1198,14 @@ export default function ProbiumLens() {
                               </div>
                             </div>
                           </div>
-
-                          {/* Behavioral Score */}
+                          {/* Behavioral Risk Score */}
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20">
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                               <div>
-                                <h4 className="text-lg font-semibold mb-2">Behavioral Risk Score</h4>
+                                <h4 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                                  Behavioral Risk Score
+                                  <span className="ml-1 text-blue-400 cursor-help" title="Overall risk based on observed behaviors. Higher is more dangerous.">?</span>
+                                </h4>
                                 <p className="text-muted-foreground">Overall assessment based on observed behaviors</p>
                               </div>
                               <div className="flex items-center gap-3">
@@ -1285,6 +1227,28 @@ export default function ProbiumLens() {
                               </div>
                             </div>
                           </div>
+                          {/* Timeline of Events */}
+                          {Array.isArray(analysis.behaviorAnalysis?.events) && analysis.behaviorAnalysis.events.length > 0 && (
+                            <div>
+                              <h4 className="text-lg font-semibold flex items-center gap-2">
+                                <Activity className="h-5 w-5 text-blue-600" />
+                                Timeline of Events
+                                <span className="ml-1 text-blue-400 cursor-help" title="Chronological list of key behavioral events.">?</span>
+                              </h4>
+                              <ul className="mt-2 space-y-2">
+                                {analysis.behaviorAnalysis.events.map((event, idx) => (
+                                  <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 rounded p-2">
+                                    <span className="font-mono text-xs text-blue-700 mr-2">{event.timestamp || idx}</span>
+                                    {event.description || JSON.stringify(event)}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {/* Fallback if no behavioral data */}
+                          {(!analysis.behaviorAnalysis || Object.keys(analysis.behaviorAnalysis).length === 0) && (
+                            <div className="text-center text-muted-foreground py-8">No behavioral data available for this file.</div>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -1300,79 +1264,64 @@ export default function ProbiumLens() {
                         <CardDescription className="text-base">Historical data and community insights</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid grid-cols-3 gap-6 text-center">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-center">
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20">
                             <div className="text-3xl font-bold text-blue-600 mb-2">
-                              {analysis.metadata.submissions || 
-                                (() => {
-                                  // Calculate submissions from local storage if API doesn't provide it
-                                  try {
-                                    const allKeys = Object.keys(localStorage);
-                                    const historyKeys = allKeys.filter(key => key.startsWith('probium_history_'));
-                                    let count = 0;
-                                    historyKeys.forEach(key => {
-                                      const history = JSON.parse(localStorage.getItem(key) || '[]');
-                                      count += history.length;
-                                    });
-                                    return count + 1; // +1 for current submission
-                                  } catch (e) {
-                                    return 1; // At least this submission
-                                  }
-                                })()
-                              }
+                              {analysis.metadata.submissions || 1}
                             </div>
                             <div className="text-sm font-medium text-muted-foreground">Community Submissions</div>
                           </div>
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20">
                             <div className="text-3xl font-bold text-green-600 mb-2">
-                              {analysis.metadata.first_seen || 
-                                (() => {
-                                  // Use current date if API doesn't provide it
-                                  try {
-                                    return new Date().toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      day: 'numeric'
-                                    });
-                                  } catch (e) {
-                                    return "Today";
-                                  }
-                                })()
-                              }
+                              {analysis.metadata.first_seen || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                             </div>
                             <div className="text-sm font-medium text-muted-foreground">First Seen</div>
                           </div>
                           <div className="p-6 rounded-xl border bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20">
                             <div className="text-3xl font-bold text-purple-600 mb-2">
-                              {analysis.metadata.last_seen || 
-                                (() => {
-                                  // Use current date if API doesn't provide it
-                                  try {
-                                    return new Date().toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      day: 'numeric'
-                                    });
-                                  } catch (e) {
-                                    return "Today";
-                                  }
-                                })()
-                              }
+                              {analysis.metadata.last_seen || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                             </div>
                             <div className="text-sm font-medium text-muted-foreground">Last Seen</div>
                           </div>
-                        </div>
-                        
-                        {/* View Personal History Link */}
-                        {session?.user && (
-                          <div className="mt-8 text-center">
-                            <Button
-                              variant="outline"
-                              onClick={() => router.push('/history')}
-                              className="bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100"
-                            >
-                              <History className="mr-2 h-4 w-4" />
-                              View Your Personal Scan History
-                            </Button>
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 col-span-2 md:col-span-1">
+                            <div className="text-3xl font-bold text-yellow-600 mb-2">
+                              {analysis.metadata.globalPrevalence ?? 'N/A'}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">Global Prevalence</div>
                           </div>
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-800/20 col-span-2 md:col-span-1">
+                            <div className="text-3xl font-bold text-red-600 mb-2">
+                              {typeof analysis.metadata.detectionRate === 'number' ? `${analysis.metadata.detectionRate}%` : 'N/A'}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">Detection Rate</div>
+                          </div>
+                          <div className="p-6 rounded-xl border bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900/20 dark:to-gray-800/20 col-span-2 md:col-span-1">
+                            <div className="text-3xl font-bold text-gray-600 mb-2">
+                              {typeof analysis.metadata.reputationScore === 'number' ? analysis.metadata.reputationScore : 'N/A'}
+                            </div>
+                            <div className="text-sm font-medium text-muted-foreground">Reputation Score</div>
+                          </div>
+                        </div>
+                        {/* Related Threats */}
+                        {Array.isArray(analysis.metadata.relatedThreats) && analysis.metadata.relatedThreats.length > 0 && (
+                          <div className="mt-8">
+                            <h4 className="text-lg font-semibold flex items-center gap-2">
+                              <AlertTriangle className="h-5 w-5 text-red-600" />
+                              Related Threats
+                              <span className="ml-1 text-red-400 cursor-help" title="Other threats or malware related to this file.">?</span>
+                            </h4>
+                            <ul className="mt-2 space-y-2">
+                              {analysis.metadata.relatedThreats.map((threat, idx) => (
+                                <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-red-50 dark:bg-red-900/20 rounded p-2">
+                                  {threat}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {/* Fallback if no intelligence data */}
+                        {(!analysis.metadata || Object.keys(analysis.metadata).length === 0) && (
+                          <div className="text-center text-muted-foreground py-8">No threat intelligence data available for this file.</div>
                         )}
                       </CardContent>
                     </Card>
