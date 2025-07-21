@@ -365,7 +365,6 @@ export default function ProbiumLens() {
   }, []);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const folderInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -377,41 +376,13 @@ export default function ProbiumLens() {
       setFileTree(null);
       setSelectedFile(null);
       setUploadError(null);
-      const fileArr = Array.from(files);
+      const file = files[0];
       try {
-        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-        if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
-          setScanResults(parsedResults);
-          setAnalysis(parsedResults[0]);
-        } else {
-          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
-        }
-      } catch (err: any) {
-        setUploadError(err?.message || "Scan failed.");
-      }
-      setLoading(false);
-    },
-    [selectedEngines]
-  );
-
-  const handleFolderSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files) return;
-      if (files.length === 0) return;
-      setLoading(true);
-      setScanResults(null);
-      setFileTree(null);
-      setSelectedFile(null);
-      setUploadError(null);
-      const fileArr = Array.from(files);
-      try {
-        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-        if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
-          setScanResults(parsedResults);
-          setAnalysis(parsedResults[0]);
+        const res = await scanFile(file, { engines: selectedEngines.join(","), generate_hashes: true, extract_metadata_flag: true });
+        if (res && (res.success || res.status === 'complete')) {
+          const parsed = parseScanResult(res);
+          setScanResults([parsed]);
+          setAnalysis(parsed);
         } else {
           setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
         }
@@ -615,131 +586,118 @@ export default function ProbiumLens() {
                 <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gray-100/90 dark:bg-gray-700/90 shadow-sm">
                   <Upload className="w-10 h-10 text-blue-600 dark:text-blue-400" strokeWidth={1.5} />
                 </div>
-                <h3 className="text-2xl font-semibold mb-2 text-center text-gray-900 dark:text-white">Upload files or folders</h3>
-                <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 text-center">Drag & drop or use the buttons below</p>
-                <div className="flex flex-col gap-8 w-full max-w-2xl justify-center items-center">
-  <div className="flex flex-row gap-8 w-full justify-center items-center">
-    <Button
-      asChild
-      size="lg"
-      className="w-80 h-28 text-lg rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 font-bold text-blue-900 focus-visible:ring-2 focus-visible:ring-blue-400 flex items-center justify-center gap-3"
-      disabled={advancedOpen && selectedEngines.length === 0}
-    >
-      <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
-        <FileUp className="w-7 h-7 text-blue-600" strokeWidth={2} />
-        <span className="font-bold text-lg text-blue-900">Files</span>
-      </label>
-    </Button>
-    <Button
-      asChild
-      size="lg"
-      className="w-80 h-28 text-lg rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 font-bold text-blue-900 focus-visible:ring-2 focus-visible:ring-blue-400 flex items-center justify-center gap-3"
-      disabled={advancedOpen && selectedEngines.length === 0}
-    >
-      <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
-        <FolderOpen className="w-7 h-7 text-blue-600" strokeWidth={2} />
-        <span className="font-bold text-lg text-blue-900">Folder</span>
-      </label>
-    </Button>
-  </div>
-  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-    <PopoverTrigger asChild>
-      <Button
-        type="button"
-        size="lg"
-        className="w-56 h-12 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
-        aria-expanded={advancedOpen}
-      >
-        <Sliders className="h-6 w-6 text-blue-600" strokeWidth={2} />
-        <span className="font-bold text-base text-blue-900">Engines</span>
-      </Button>
-    </PopoverTrigger>
-    <PopoverContent className="w-96 p-6 rounded-xl shadow-2xl bg-white/90 dark:bg-slate-900/90 border border-blue-200 dark:border-blue-700 backdrop-blur-md backdrop-saturate-150">
-      <div className="mb-4 text-lg font-bold text-blue-700 dark:text-blue-200 flex items-center gap-2">
-        <Sliders className="h-5 w-5" />
-        Select Engines
-      </div>
-      <input
-        type="text"
-        value={engineSearch}
-        onChange={e => setEngineSearch(e.target.value)}
-        placeholder="Search engines..."
-        className="w-full mb-3 px-3 py-2 rounded border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-base"
-        aria-label="Search engines"
-      />
-      <div className="max-h-64 overflow-y-auto grid grid-cols-2 gap-3">
-        {filteredEngines.length === 0 ? (
-          <div className="col-span-2 text-center text-muted-foreground">No engines match your search.</div>
-        ) : (
-          filteredEngines.map((engine, idx) => (
-            <label key={engine.name || idx} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30">
-              <input
-                type="checkbox"
-                checked={selectedEngines.includes(engine.name)}
-                onChange={e => {
-                  setSelectedEngines(prev =>
-                    e.target.checked
-                      ? [...prev, engine.name]
-                      : prev.filter(n => n !== engine.name)
-                  );
-                }}
-                className="accent-blue-600 w-5 h-5"
-              />
-              <span className="text-base font-bold text-gray-800 dark:text-gray-200">{engine.name}</span>
-            </label>
-          ))
-        )}
-      </div>
-      {engineError && <div className="text-red-600 font-semibold mt-2">{engineError}</div>}
-      <Button
-        type="button"
-        className="mt-4 w-full bg-gradient-to-r from-blue-600 to-blue-400 text-white font-bold rounded-xl"
-        onClick={() => setAdvancedOpen(false)}
-      >
-        Done
-      </Button>
-    </PopoverContent>
-  </Popover>
-</div>
-                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple ref={fileInputRef} />
-                <input type="file" id="folder-upload" className="hidden" onChange={handleFolderSelect} multiple ref={folderInputRef} />
+                {/* Update heading and description to remove 'folders' */}
+                <h3 className="text-2xl font-semibold mb-2 text-center text-gray-900 dark:text-white">Upload files</h3>
+                <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 text-center">Drag & drop or use the button below</p>
+                {/* Only show the Files button, remove any folder/folders button */}
+                <div className="flex flex-row gap-4 w-full justify-center items-center mt-4">
+                  <Button
+                    type="button"
+                    size="lg"
+                    className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={advancedOpen && selectedEngines.length === 0}
+                  >
+                    <FileUp className="w-6 h-6 text-blue-600" strokeWidth={2} />
+                    <span className="font-bold text-base text-blue-900">Files</span>
+                  </Button>
+                  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        size="lg"
+                        className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
+                        aria-expanded={advancedOpen}
+                      >
+                        <Sliders className="h-6 w-6 text-blue-600" strokeWidth={2} />
+                        <span className="font-bold text-base text-blue-900">Engines</span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-96 p-6 rounded-xl shadow-2xl bg-white/90 dark:bg-slate-900/90 border border-blue-200 dark:border-blue-700 backdrop-blur-md backdrop-saturate-150">
+                      <div className="mb-4 text-lg font-bold text-blue-700 dark:text-blue-200 flex items-center gap-2">
+                        <Sliders className="h-5 w-5" />
+                        Select Engines
+                      </div>
+                      <input
+                        type="text"
+                        value={engineSearch}
+                        onChange={e => setEngineSearch(e.target.value)}
+                        placeholder="Search engines..."
+                        className="w-full mb-3 px-3 py-2 rounded border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-base"
+                        aria-label="Search engines"
+                      />
+                      <div className="max-h-64 overflow-y-auto grid grid-cols-2 gap-3">
+                        {filteredEngines.length === 0 ? (
+                          <div className="col-span-2 text-center text-muted-foreground">No engines match your search.</div>
+                        ) : (
+                          filteredEngines.map((engine, idx) => (
+                            <label key={engine.name || idx} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30">
+                              <input
+                                type="checkbox"
+                                checked={selectedEngines.includes(engine.name)}
+                                onChange={e => {
+                                  setSelectedEngines(prev =>
+                                    e.target.checked
+                                      ? [...prev, engine.name]
+                                      : prev.filter(n => n !== engine.name)
+                                  );
+                                }}
+                                className="accent-blue-600 w-5 h-5"
+                              />
+                              <span className="text-base font-bold text-gray-800 dark:text-gray-200">{engine.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      {engineError && <div className="text-red-600 font-semibold mt-2">{engineError}</div>}
+                      <Button
+                        type="button"
+                        className="mt-4 w-full bg-gradient-to-r from-blue-600 to-blue-400 text-white font-bold rounded-xl"
+                        onClick={() => setAdvancedOpen(false)}
+                      >
+                        Done
+                      </Button>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple={false} ref={fileInputRef} />
+                <div className="mt-12 grid grid-cols-3 gap-8 text-center">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-yellow-100 to-orange-100 dark:from-yellow-900/20 dark:to-orange-900/20">
+                      <Zap className="w-6 h-6 text-yellow-600" />
+                    </div>
+                    <span className="font-medium">Lightning Fast</span>
+                    <span className="text-sm text-muted-foreground">Results in seconds</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/20 dark:to-cyan-900/20">
+                      <Database className="w-6 h-6 text-blue-600" />
+                    </div>
+                    <span className="font-medium">30+ Engines</span>
+                    <span className="text-sm text-muted-foreground">Comprehensive scanning</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20">
+                      <Lock className="w-6 h-6 text-green-600" />
+                    </div>
+                    <span className="font-medium">100% Secure</span>
+                    <span className="text-sm text-muted-foreground">Files never stored</span>
+                  </div>
+                </div>
+                {/* Add a loading spinner/message and visible error message in the upload area */}
+                {loading && (
+                  <div className="flex flex-col items-center justify-center my-8">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-opacity-50 mb-4"></div>
+                    <span className="text-blue-700 font-semibold text-lg">Processing your scan...</span>
+                  </div>
+                )}
+                {uploadError && (
+                  <div className="flex flex-col items-center justify-center my-8">
+                    <span className="text-red-600 font-bold text-lg">{uploadError}</span>
+                  </div>
+                )}
               </div>
-
-              <div className="mt-12 grid grid-cols-3 gap-8 text-center">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-yellow-100 to-orange-100 dark:from-yellow-900/20 dark:to-orange-900/20">
-                    <Zap className="w-6 h-6 text-yellow-600" />
-                  </div>
-                  <span className="font-medium">Lightning Fast</span>
-                  <span className="text-sm text-muted-foreground">Results in seconds</span>
-                </div>
-                <div className="flex flex-col items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/20 dark:to-cyan-900/20">
-                    <Database className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <span className="font-medium">30+ Engines</span>
-                  <span className="text-sm text-muted-foreground">Comprehensive scanning</span>
-                </div>
-                <div className="flex flex-col items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20">
-                    <Lock className="w-6 h-6 text-green-600" />
-                  </div>
-                  <span className="font-medium">100% Secure</span>
-                  <span className="text-sm text-muted-foreground">Files never stored</span>
-                </div>
-              </div>
-              {/* Add a loading spinner/message and visible error message in the upload area */}
-              {loading && (
-                <div className="flex flex-col items-center justify-center my-8">
-                  <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-opacity-50 mb-4"></div>
-                  <span className="text-blue-700 font-semibold text-lg">Processing your scan...</span>
-                </div>
-              )}
-              {uploadError && (
-                <div className="flex flex-col items-center justify-center my-8">
-                  <span className="text-red-600 font-bold text-lg">{uploadError}</span>
-                </div>
-              )}
+              {/* End upload area main div */}
             </CardContent>
           </Card>
         ) : (
@@ -1049,7 +1007,7 @@ export default function ProbiumLens() {
                                 MD5
                               </label>
                               <p className="font-mono text-sm bg-gray-50 dark:bg-slate-800 p-3 rounded-lg break-all">
-                                {analysis.metadata.md5}
+                                {analysis.metadata.md5 || <span className="text-muted-foreground">Not available</span>}
                               </p>
                             </div>
                             <div className="space-y-2">
@@ -1057,7 +1015,7 @@ export default function ProbiumLens() {
                                 SHA1
                               </label>
                               <p className="font-mono text-sm bg-gray-50 dark:bg-slate-800 p-3 rounded-lg break-all">
-                                {analysis.metadata.sha1}
+                                {analysis.metadata.sha1 || <span className="text-muted-foreground">Not available</span>}
                               </p>
                             </div>
                             <div className="space-y-2">
@@ -1065,7 +1023,7 @@ export default function ProbiumLens() {
                                 SHA256
                               </label>
                               <p className="font-mono text-sm bg-gray-50 dark:bg-slate-800 p-3 rounded-lg break-all">
-                                {analysis.metadata.sha256}
+                                {analysis.metadata.sha256 || <span className="text-muted-foreground">Not available</span>}
                               </p>
                             </div>
                           </div>
@@ -1236,12 +1194,14 @@ export default function ProbiumLens() {
                                 <span className="ml-1 text-blue-400 cursor-help" title="Chronological list of key behavioral events.">?</span>
                               </h4>
                               <ul className="mt-2 space-y-2">
-                                {analysis.behaviorAnalysis.events.map((event, idx) => (
-                                  <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 rounded p-2">
-                                    <span className="font-mono text-xs text-blue-700 mr-2">{event.timestamp || idx}</span>
-                                    {event.description || JSON.stringify(event)}
-                                  </li>
-                                ))}
+                                {analysis.behaviorAnalysis.events.map(function(event: any, idx: number) {
+                                  return (
+                                    <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 rounded p-2">
+                                      <span className="font-mono text-xs text-blue-700 mr-2">{event.timestamp || idx}</span>
+                                      {event.description || JSON.stringify(event)}
+                                    </li>
+                                  );
+                                })}
                               </ul>
                             </div>
                           )}
@@ -1311,11 +1271,13 @@ export default function ProbiumLens() {
                               <span className="ml-1 text-red-400 cursor-help" title="Other threats or malware related to this file.">?</span>
                             </h4>
                             <ul className="mt-2 space-y-2">
-                              {analysis.metadata.relatedThreats.map((threat, idx) => (
-                                <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-red-50 dark:bg-red-900/20 rounded p-2">
-                                  {threat}
-                                </li>
-                              ))}
+                              {analysis.metadata.relatedThreats.map(function(threat: any, idx: number) {
+                                return (
+                                  <li key={idx} className="text-sm text-gray-800 dark:text-gray-200 bg-red-50 dark:bg-red-900/20 rounded p-2">
+                                    {threat}
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </div>
                         )}
