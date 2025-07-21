@@ -99,6 +99,7 @@ export default function ProbiumLens() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatTemperature, setChatTemperature] = useState(0.6);
   const [chatMaxTokens, setChatMaxTokens] = useState(400);
+  const [showPNGs, setShowPNGs] = useState(false);
 
   // 2. Refactor state for multi-file/folder support
   const [fileTree, setFileTree] = useState<FileNode[] | null>(null);
@@ -323,63 +324,12 @@ export default function ProbiumLens() {
     }
   }, []);
 
-  // 3. New handler for folder input
-  const handleFolderSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        setLoading(true);
-        setScanResults(null);
-        setFileTree(null);
-        setSelectedFile(null);
-        setUploadError(null);
-        const fileArr = Array.from(files);
-        try {
-          const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-          if (res.success && Array.isArray(res.results)) {
-            setScanResults(res.results.map(parseScanResult));
-            // TODO: Build fileTree from fileArr and results
-          } else {
-            setUploadError(res.detail || "Scan failed.");
-          }
-        } catch (err: any) {
-          setUploadError(err?.message || "Scan failed.");
-        }
-        setLoading(false);
-      }
-    },
-    [selectedEngines]
-  );
+  // Add a debug state for file input
+  console.log('rendered file input', fileInputRef.current);
+  console.log('rendered folder input', folderInputRef.current);
 
-  // 4. Update handleFileSelect to clear uploadError and only send file objects
-  const handleFileSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (files && files.length > 0) {
-        setLoading(true);
-        setScanResults(null);
-        setFileTree(null);
-        setSelectedFile(null);
-        setUploadError(null);
-        const fileArr = Array.from(files);
-        try {
-          const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
-          if (res.success && Array.isArray(res.results)) {
-            setScanResults(res.results.map(parseScanResult));
-            // TODO: Build fileTree from fileArr and results
-          } else {
-            setUploadError(res.detail || "Scan failed.");
-          }
-        } catch (err: any) {
-          setUploadError(err?.message || "Scan failed.");
-        }
-        setLoading(false);
-      }
-    },
-    [selectedEngines]
-  );
-
-  // 5. Update handleDrop to support folders
+  // Add a visible debug button to trigger the file input directly
+  // Restore drag and drop handlers
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
@@ -398,7 +348,9 @@ export default function ProbiumLens() {
         const idToken = (session as any)?.id_token;
         const res = await scanBatch(files, { engines: selectedEngines.join(",") });
         if (res.success && Array.isArray(res.results)) {
-          setScanResults(res.results.map(parseScanResult));
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]); // Show first result in UI
           // TODO: Build fileTree from files and results
         } else {
           // handle error
@@ -410,91 +362,158 @@ export default function ProbiumLens() {
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(true)
-  }, [])
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-  }, [])
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
 
-  const getThreatColor = (result: string) => {
-    switch (result) {
-      case "threat":
-        return "destructive"
-      case "suspicious":
-        return "secondary"
-      default:
-        return "default"
-    }
-  }
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      console.log('handleFileSelect triggered, files:', files);
+      if (!files) {
+        console.log('No files object on event');
+        return;
+      }
+      if (files.length === 0) {
+        console.log('Files object is empty');
+        return;
+      }
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      setUploadError(null);
+      const fileArr = Array.from(files);
+      console.log('fileArr:', fileArr);
+      try {
+        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+        console.log('Scan response:', res); // Log the response
+        if (res.success && Array.isArray(res.results)) {
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]); // Show first result in UI
+          console.log('Scan results set:', res.results);
+        } else {
+          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
+          console.log('Scan failed, raw response:', res);
+        }
+      } catch (err: any) {
+        console.error('Scan error:', err); // Log any errors
+        setUploadError(err?.message || "Scan failed.");
+      }
+      setLoading(false);
+    },
+    [selectedEngines]
+  );
+
+  const handleFolderSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      console.log('handleFolderSelect triggered, files:', files);
+      if (!files) {
+        console.log('No files object on event');
+        return;
+      }
+      if (files.length === 0) {
+        console.log('Files object is empty');
+        return;
+      }
+      setLoading(true);
+      setScanResults(null);
+      setFileTree(null);
+      setSelectedFile(null);
+      setUploadError(null);
+      const fileArr = Array.from(files);
+      console.log('fileArr:', fileArr);
+      try {
+        const res = await scanBatch(fileArr, { engines: selectedEngines.join(",") });
+        console.log('Scan response:', res); // Log the response
+        if (res.success && Array.isArray(res.results)) {
+          const parsedResults = res.results.map(parseScanResult);
+          setScanResults(parsedResults);
+          setAnalysis(parsedResults[0]); // Show first result in UI
+          console.log('Scan results set:', res.results);
+        } else {
+          setUploadError('Scan failed. Raw response: ' + JSON.stringify(res, null, 2));
+          console.log('Scan failed, raw response:', res);
+        }
+      } catch (err: any) {
+        console.error('Scan error:', err); // Log any errors
+        setUploadError(err?.message || "Scan failed.");
+      }
+      setLoading(false);
+    },
+    [selectedEngines]
+  );
+
+  const handleLogin = (userData: any) => {
+    setUser(userData);
+    localStorage.setItem("probiumUser", JSON.stringify(userData));
+  };
 
   const getStatusIcon = () => {
-    if (!analysis) return <Eye className="w-6 h-6" />
-
+    if (!analysis) return <Eye className="w-6 h-6" />;
     switch (analysis.status) {
       case "uploading":
-        return <Upload className="w-6 h-6 animate-pulse text-blue-500" />
+        return <Upload className="w-6 h-6 animate-pulse text-blue-500" />;
       case "scanning":
-        return <Activity className="w-6 h-6 animate-pulse text-orange-500" />
+        return <Activity className="w-6 h-6 animate-pulse text-orange-500" />;
       case "complete":
         return analysis.threats > 0 ? (
           <AlertTriangle className="w-6 h-6 text-red-500" />
         ) : (
           <CheckCircle className="w-6 h-6 text-green-500" />
-        )
+        );
+      default:
+        return <Eye className="w-6 h-6" />;
     }
-  }
-
-  const handleLogin = (userData: any) => {
-    setUser(userData)
-    localStorage.setItem("probiumUser", JSON.stringify(userData))
-  }
-
-  const handleLogout = () => {
-    setUser(null)
-    localStorage.removeItem("probiumUser")
-  }
-
-  // Load user from localStorage on initial render
-  useEffect(() => {
-    const savedUser = localStorage.getItem("probiumUser")
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser))
-      } catch (e) {
-        console.error("Failed to parse saved user data")
-      }
-    }
-  }, [])
-
-  // Handler to fetch AI insights
-  // This useEffect is now redundant as fetchAiInsights handles caching
-  // useEffect(() => {
-  //   if (analysis) {
-  //     fetchAiInsights();
-  //   }
-  // }, [analysis, fetchAiInsights]);
-
-  // 6. Polish Intelligence tab content for friendliness (add more helpful text, icons, etc. as needed)
-  // This section is not directly related to the requested changes, so it's omitted.
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       {/* Header */}
-      <header className="border-b bg-white/90 backdrop-blur-md shadow-sm dark:bg-slate-900/90">
-        <div className="max-w-7xl mx-auto flex h-16 items-center justify-between pl-0 pr-4 sm:pr-6 lg:pr-8">
-          <div className="flex items-center gap-3 -ml-2">
-            {/* Removed Eye icon from top left */}
-            <div className="pl-0">
-              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                Probium Lens
-              </h1>
-              <p className="text-xs text-muted-foreground">Advanced File Intelligence</p>
-            </div>
+      <header className="border-b shadow-lg bg-white/70 backdrop-blur-xl backdrop-saturate-150 sticky top-0 z-50">
+        <div className="w-full flex items-center justify-between px-6 py-3" style={{boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)', borderRadius: '0 0 2rem 2rem'}}>
+          <div className="flex items-center gap-8">
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent tracking-tight">Probium Lens</h1>
+            <nav className="flex gap-4">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="text-gray-800 text-base font-semibold px-3 py-1">Features</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56">
+                  <DropdownMenuItem>File Scanning</DropdownMenuItem>
+                  <DropdownMenuItem>Threat Intelligence</DropdownMenuItem>
+                  <DropdownMenuItem>AI Insights</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="text-gray-800 text-base font-semibold px-3 py-1">Resources</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56">
+                  <DropdownMenuItem>Docs</DropdownMenuItem>
+                  <DropdownMenuItem>API Reference</DropdownMenuItem>
+                  <DropdownMenuItem>Support</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="text-gray-800 text-base font-semibold px-3 py-1">Probity</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56">
+                  <DropdownMenuItem asChild>
+                    <a href="https://www.probity.com" target="_blank" rel="noopener noreferrer">Visit Probity.com</a>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </nav>
           </div>
-
           <div className="flex items-center gap-4">
             {session ? (
               <div className="flex items-center gap-2">
@@ -560,15 +579,67 @@ export default function ProbiumLens() {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Hero Section */}
-        <div className="text-center mb-12">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg">
+        <div className="text-center mb-12 relative">
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg relative">
             <Eye className="h-10 w-10 text-white" />
+            {/* Invisible button over the Eye icon */}
+            <button
+              aria-label="Show PNGs"
+              onClick={() => setShowPNGs((prev) => !prev)}
+              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 'none', cursor: 'pointer', zIndex: 10 }}
+              tabIndex={0}
+            />
           </div>
+          {/* Animated PNGs in background, shown when showPNGs is true */}
+          {showPNGs && (
+            <>
+              <style>{`
+                @keyframes moveLeftToRight {
+                  0% { left: -40vw; }
+                  100% { left: 100vw; }
+                }
+                @keyframes moveRightToLeft {
+                  0% { right: -40vw; }
+                  100% { right: 100vw; }
+                }
+              `}</style>
+              <img
+                src="/1731786333420.jpg"
+                alt="Background 1"
+                style={{
+                  position: 'fixed',
+                  top: '20vh',
+                  left: 0,
+                  width: '40vw',
+                  maxHeight: '60vh',
+                  opacity: 0.3,
+                  zIndex: 100,
+                  pointerEvents: 'none',
+                  animation: 'moveLeftToRight 3s linear infinite',
+                }}
+              />
+              <img
+                src="/chad.png"
+                alt="Chad"
+                style={{
+                  position: 'fixed',
+                  top: '50vh',
+                  right: 0,
+                  width: '40vw',
+                  maxHeight: '60vh',
+                  opacity: 0.3,
+                  zIndex: 100,
+                  pointerEvents: 'none',
+                  animation: 'moveRightToLeft 3s linear infinite',
+                }}
+              />
+            </>
+          )}
           <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            See Through Any File
+            Upload Your Files
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            Upload any file and get instant, comprehensive security analysis powered by advanced threat intelligence.
+            Drag & drop or use the buttons below to upload files and folders.
           </p>
         </div>
 
@@ -597,55 +668,108 @@ export default function ProbiumLens() {
                 </div>
                 <h3 className="text-2xl font-semibold mb-2 text-center text-gray-900 dark:text-white">Upload files or folders</h3>
                 <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 text-center">Drag & drop or use the buttons below</p>
-                <div className="flex flex-col sm:flex-row gap-5 w-full max-w-2xl justify-center items-center">
-                  <Button
-                    asChild
-                    size="lg"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
-                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
-                    hover:bg-gray-50 dark:hover:bg-gray-700 
-                    focus-visible:ring-2 focus-visible:ring-blue-400
-                    transition-all duration-200"
-                    disabled={advancedOpen && selectedEngines.length === 0}
-                  >
-                    <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
-                      <FileUp className="w-6 h-6 text-blue-600 dark:text-blue-400" strokeWidth={2} />
-                      <span className="font-medium text-gray-800 dark:text-gray-200">Select Files</span>
-                    </label>
-                  </Button>
-                  <Button
-                    asChild
-                    size="lg"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
-                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
-                    hover:bg-gray-50 dark:hover:bg-gray-700 
-                    focus-visible:ring-2 focus-visible:ring-blue-400
-                    transition-all duration-200"
-                    disabled={advancedOpen && selectedEngines.length === 0}
-                  >
-                    <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
-                      <FolderOpen className="w-6 h-6 text-green-600 dark:text-green-400" strokeWidth={2} />
-                      <span className="font-medium text-gray-800 dark:text-gray-200">Select Folder</span>
-                    </label>
-                  </Button>
-                  <Button
-                    asChild
-                    size="lg"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
-                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
-                    hover:bg-gray-50 dark:hover:bg-gray-700 
-                    focus-visible:ring-2 focus-visible:ring-blue-400
-                    transition-all duration-200"
-                    aria-expanded={advancedOpen}
-                  >
-                    <label className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
-                      <Sliders className="h-6 w-6 text-gray-600 dark:text-gray-400" strokeWidth={2} />
-                      <span className="font-medium text-gray-800 dark:text-gray-200">Advanced</span>
-                    </label>
-                  </Button>
-                </div>
+                <div className="flex flex-col gap-8 w-full max-w-2xl justify-center items-center">
+  <div className="flex flex-row gap-8 w-full justify-center items-center">
+    <Button
+      asChild
+      size="lg"
+      className="w-80 h-28 text-lg rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 font-bold text-blue-900 focus-visible:ring-2 focus-visible:ring-blue-400 flex items-center justify-center gap-3"
+      disabled={advancedOpen && selectedEngines.length === 0}
+    >
+      <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
+        <FileUp className="w-7 h-7 text-blue-600" strokeWidth={2} />
+        <span className="font-bold text-lg text-blue-900">Files</span>
+      </label>
+    </Button>
+    <Button
+      asChild
+      size="lg"
+      className="w-80 h-28 text-lg rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 font-bold text-blue-900 focus-visible:ring-2 focus-visible:ring-blue-400 flex items-center justify-center gap-3"
+      disabled={advancedOpen && selectedEngines.length === 0}
+    >
+      <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
+        <FolderOpen className="w-7 h-7 text-blue-600" strokeWidth={2} />
+        <span className="font-bold text-lg text-blue-900">Folder</span>
+      </label>
+    </Button>
+  </div>
+  <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
+    <PopoverTrigger asChild>
+      <Button
+        type="button"
+        size="lg"
+        className="w-56 h-12 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
+        aria-expanded={advancedOpen}
+      >
+        <Sliders className="h-6 w-6 text-blue-600" strokeWidth={2} />
+        <span className="font-bold text-base text-blue-900">Engines</span>
+      </Button>
+    </PopoverTrigger>
+    <PopoverContent className="w-96 p-6 rounded-xl shadow-2xl bg-white/90 dark:bg-slate-900/90 border border-blue-200 dark:border-blue-700 backdrop-blur-md backdrop-saturate-150">
+      <div className="mb-4 text-lg font-bold text-blue-700 dark:text-blue-200 flex items-center gap-2">
+        <Sliders className="h-5 w-5" />
+        Select Engines
+      </div>
+      <div className="max-h-64 overflow-y-auto grid grid-cols-2 gap-3">
+        {engines.length === 0 ? (
+          <div className="col-span-2 text-center text-muted-foreground">No engines available.</div>
+        ) : (
+          engines.map((engine, idx) => (
+            <label key={engine.name || idx} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30">
+              <input
+                type="checkbox"
+                checked={selectedEngines.includes(engine.name)}
+                onChange={e => {
+                  setSelectedEngines(prev =>
+                    e.target.checked
+                      ? [...prev, engine.name]
+                      : prev.filter(n => n !== engine.name)
+                  );
+                }}
+                className="accent-blue-600 w-5 h-5"
+              />
+              <span className="text-base font-bold text-gray-800 dark:text-gray-200">{engine.name}</span>
+            </label>
+          ))
+        )}
+      </div>
+      {engineError && <div className="text-red-600 font-semibold mt-2">{engineError}</div>}
+      <Button
+        type="button"
+        className="mt-4 w-full bg-gradient-to-r from-blue-600 to-blue-400 text-white font-bold rounded-xl"
+        onClick={() => setAdvancedOpen(false)}
+      >
+        Done
+      </Button>
+    </PopoverContent>
+  </Popover>
+</div>
                 <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple ref={fileInputRef} />
                 <input type="file" id="folder-upload" className="hidden" onChange={handleFolderSelect} multiple ref={folderInputRef} />
+              </div>
+
+              <div className="my-4 flex flex-col items-center">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-4 py-2 bg-yellow-200 text-yellow-900 rounded font-bold mb-2"
+                >
+                  DEBUG: Open File Picker
+                </button>
+                <button
+                  onClick={() => folderInputRef.current?.click()}
+                  className="px-4 py-2 bg-yellow-200 text-yellow-900 rounded font-bold"
+                >
+                  DEBUG: Open Folder Picker
+                </button>
+              </div>
+
+              <div className="bg-gray-100 border border-gray-300 rounded p-4 my-4 text-xs text-left max-w-2xl mx-auto">
+                <div><b>DEBUG STATE</b></div>
+                <div>fileInputRef: {String(!!fileInputRef.current)}</div>
+                <div>folderInputRef: {String(!!folderInputRef.current)}</div>
+                <div>loading: {String(loading)}</div>
+                <div>uploadError: {uploadError ? uploadError : 'None'}</div>
+                <div>scanResults: {scanResults ? JSON.stringify(scanResults, null, 2) : 'None'}</div>
               </div>
 
               <div className="mt-12 grid grid-cols-3 gap-8 text-center">
@@ -671,8 +795,17 @@ export default function ProbiumLens() {
                   <span className="text-sm text-muted-foreground">Files never stored</span>
                 </div>
               </div>
+              {/* Add a loading spinner/message and visible error message in the upload area */}
+              {loading && (
+                <div className="flex flex-col items-center justify-center my-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-opacity-50 mb-4"></div>
+                  <span className="text-blue-700 font-semibold text-lg">Processing your scan...</span>
+                </div>
+              )}
               {uploadError && (
-                <div className="text-red-600 font-semibold text-center mt-4">{uploadError}</div>
+                <div className="flex flex-col items-center justify-center my-8">
+                  <span className="text-red-600 font-bold text-lg">{uploadError}</span>
+                </div>
               )}
             </CardContent>
           </Card>
