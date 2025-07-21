@@ -21,6 +21,9 @@ import {
   Globe,
   Activity,
   Folder,
+  FileUp,
+  FolderOpen,
+  Sliders,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -573,46 +576,71 @@ export default function ProbiumLens() {
           /* Upload Area */
           <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-white/80 backdrop-blur-sm">
             <CardContent className="p-12">
-              {/* Replace the upload area with a perfectly aligned, user-friendly, and responsive layout */}
-              <div className="flex flex-col items-center justify-center w-full">
-                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20">
-                  <Upload className="w-8 h-8 text-blue-600" />
+              {/* Replace the upload area with a true water glass effect and improved readability */}
+              <div
+                className={
+                  `flex flex-col items-center justify-center w-full border border-gray-200 dark:border-gray-700 rounded-2xl p-14 mb-8 
+                  bg-white/80 dark:bg-slate-800/80 backdrop-filter backdrop-blur-xl shadow-lg 
+                  transition-all duration-300 ${
+                    isDragging
+                      ? "border-blue-400 bg-blue-50/80 dark:bg-blue-900/30 scale-[1.02]"
+                      : ""
+                  }`
+                }
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+              >
+                {/* Update the upload area icons to be larger and more intuitive */}
+                <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gray-100/90 dark:bg-gray-700/90 shadow-sm">
+                  <Upload className="w-10 h-10 text-blue-600 dark:text-blue-400" strokeWidth={1.5} />
                 </div>
-                <h3 className="text-2xl font-semibold mb-2 text-center">Drop your file here</h3>
-                <p className="text-muted-foreground mb-8 text-lg text-center">Or click to browse</p>
-                <div className="flex flex-col sm:flex-row gap-4 w-full max-w-2xl justify-center items-center mb-2">
+                <h3 className="text-2xl font-semibold mb-2 text-center text-gray-900 dark:text-white">Upload files or folders</h3>
+                <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 text-center">Drag & drop or use the buttons below</p>
+                <div className="flex flex-col sm:flex-row gap-5 w-full max-w-2xl justify-center items-center">
                   <Button
                     asChild
                     size="lg"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus-visible:ring-2 focus-visible:ring-blue-400"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
+                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
+                    hover:bg-gray-50 dark:hover:bg-gray-700 
+                    focus-visible:ring-2 focus-visible:ring-blue-400
+                    transition-all duration-200"
                     disabled={advancedOpen && selectedEngines.length === 0}
                   >
-                    <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
-                      <Upload className="w-6 h-6" />
-                      <span className="font-medium">Choose Files</span>
+                    <label htmlFor="file-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
+                      <FileUp className="w-6 h-6 text-blue-600 dark:text-blue-400" strokeWidth={2} />
+                      <span className="font-medium text-gray-800 dark:text-gray-200">Select Files</span>
                     </label>
                   </Button>
                   <Button
                     asChild
                     size="lg"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 focus-visible:ring-2 focus-visible:ring-green-400"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
+                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
+                    hover:bg-gray-50 dark:hover:bg-gray-700 
+                    focus-visible:ring-2 focus-visible:ring-blue-400
+                    transition-all duration-200"
                     disabled={advancedOpen && selectedEngines.length === 0}
                   >
-                    <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
-                      <Folder className="w-6 h-6" />
-                      <span className="font-medium">Choose Folder</span>
+                    <label htmlFor="folder-upload" className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
+                      <FolderOpen className="w-6 h-6 text-green-600 dark:text-green-400" strokeWidth={2} />
+                      <span className="font-medium text-gray-800 dark:text-gray-200">Select Folder</span>
                     </label>
                   </Button>
                   <Button
                     asChild
                     size="lg"
-                    variant="outline"
-                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-lg px-4 rounded-xl shadow-md flex items-center justify-center transition-all duration-200 bg-white hover:bg-gray-100 border border-gray-300 focus-visible:ring-2 focus-visible:ring-gray-400"
+                    className="flex-1 min-w-[160px] max-w-[220px] h-14 text-base px-5 rounded-xl 
+                    bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700
+                    hover:bg-gray-50 dark:hover:bg-gray-700 
+                    focus-visible:ring-2 focus-visible:ring-blue-400
+                    transition-all duration-200"
                     aria-expanded={advancedOpen}
                   >
-                    <label className="cursor-pointer w-full h-full flex items-center justify-center gap-2">
-                      <Settings className="h-5 w-5" />
-                      <span className="text-sm font-medium">Advanced Settings</span>
+                    <label className="cursor-pointer w-full h-full flex items-center justify-center gap-3">
+                      <Sliders className="h-6 w-6 text-gray-600 dark:text-gray-400" strokeWidth={2} />
+                      <span className="font-medium text-gray-800 dark:text-gray-200">Advanced</span>
                     </label>
                   </Button>
                 </div>

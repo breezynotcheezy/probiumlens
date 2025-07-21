@@ -1,8 +1,34 @@
 const API_BASE = "https://probium.onrender.com/api/v1";
 
 export async function getEngines() {
-  const res = await fetch(`${API_BASE}/engines`);
-  return res.json();
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
+    const res = await fetch(`${API_BASE}/engines`, {
+      method: 'GET',
+      next: { revalidate: 3600 }, // Cache for 1 hour
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'default',
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      throw new Error(`Failed to fetch engines: ${res.status} ${res.statusText}`);
+    }
+    
+    return res.json();
+  } catch (error) {
+    console.error('Error fetching engines:', error);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return { engines: [], error: 'Request timed out' };
+    }
+    return { engines: [], error: error instanceof Error ? error.message : 'Failed to fetch engines' };
+  }
 }
 
 export async function getEngineStatus() {
