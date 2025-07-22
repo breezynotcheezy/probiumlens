@@ -161,8 +161,12 @@ export default function ProbiumLens() {
   // Fetch available engines on mount
   useEffect(() => {
     getEngines().then((data) => {
-      if (Array.isArray(data)) setEngines(data);
-      else if (Array.isArray(data.engines)) setEngines(data.engines);
+      let engineList = [];
+      if (Array.isArray(data)) engineList = data;
+      else if (Array.isArray(data.engines)) engineList = data.engines;
+      setEngines(engineList);
+      // Default select all engines
+      setSelectedEngines(engineList.map(e => e.name));
     });
   }, []);
 
@@ -177,6 +181,8 @@ export default function ProbiumLens() {
 
   // Helper to parse backend scan result into FileAnalysis
   const parseScanResult = (result: any): FileAnalysis => {
+    // Debug log
+    console.log('Scan result:', result);
     // Map engines_used to a list of engines, using threat_level for all (since no per-engine breakdown)
     const engines = Array.isArray(result.engines_used)
       ? result.engines_used.map((engine: string) => ({
@@ -190,10 +196,17 @@ export default function ProbiumLens() {
         }))
       : [];
     const threats = result.security?.threat_level === "high" || result.security?.threat_level === "medium" ? 1 : 0;
+    // Defensive checks
+    let fileSize = '-- MB';
+    if (typeof result.size === 'number' && !isNaN(result.size)) {
+      fileSize = `${(result.size / 1024 / 1024).toFixed(2)} MB`;
+    }
+    const fileType = result.mime_type || result.detected_type || 'Unknown';
+    const fileName = result.filename || 'Unknown';
     return {
-      fileName: result.filename,
-      fileSize: `${(result.size / 1024 / 1024).toFixed(2)} MB`,
-      fileType: result.mime_type || result.detected_type || "Unknown",
+      fileName,
+      fileSize,
+      fileType,
       uploadTime: result.timestamp ? new Date(result.timestamp).toLocaleString() : new Date().toLocaleString(),
       scanProgress: 100,
       status: "complete",
@@ -348,7 +361,7 @@ export default function ProbiumLens() {
         const idToken = (session as any)?.id_token;
         const res = await scanBatch(files, { engines: selectedEngines.join(",") });
         if (res.success && Array.isArray(res.results)) {
-          const parsedResults = res.results.map(parseScanResult);
+          const parsedResults = res.results.map(r => parseScanResult(r.result || r));
           setScanResults(parsedResults);
           setAnalysis(parsedResults[0]);
         }
@@ -384,7 +397,7 @@ export default function ProbiumLens() {
       try {
         const res = await scanFile(file, { engines: selectedEngines.join(","), generate_hashes: true, extract_metadata_flag: true });
         if (res && (res.success || res.status === 'complete')) {
-          const parsed = parseScanResult(res);
+          const parsed = parseScanResult(res.result || res);
           setScanResults([parsed]);
           setAnalysis(parsed);
         } else {
@@ -428,8 +441,15 @@ export default function ProbiumLens() {
       </Head>
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
         {/* Header */}
-        <header className="w-full flex justify-center py-4 bg-transparent">
-          <div className="w-full max-w-5xl flex items-center justify-between px-8 py-3 bg-white/70 backdrop-blur-xl rounded-full shadow-lg border border-blue-100">
+        <header className="w-full flex justify-center py-4 bg-transparent relative">
+          {/* Chromatic glow behind the pill */}
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[110%] h-[180%] rounded-full bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl" style={{zIndex:1}} />
+          <div className="w-full max-w-5xl flex items-center justify-between px-8 py-3 rounded-full bg-white shadow-lg relative z-10 overflow-visible"
+            style={{
+              background: '#fff',
+              boxShadow: '0 4px 24px 0 rgba(31, 38, 135, 0.08)',
+            }}
+          >
             <div className="flex items-center gap-8">
               <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent tracking-tight">Probium Lens</h1>
               <nav className="flex gap-4">
@@ -529,119 +549,64 @@ export default function ProbiumLens() {
         </header>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          {/* Hero Section */}
-          <div className="text-center mb-12 relative">
-            <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg relative">
-              <Eye className="h-10 w-10 text-white" />
-              {/* Invisible button over the Eye icon */}
-              <button
-                aria-label="Easter Egg Trigger"
-                onClick={handleEyeClick}
-                style={{ position: 'absolute', inset: 0, background: 'transparent', border: 'none', cursor: 'default', zIndex: 10 }}
-                tabIndex={0}
-              />
-            </div>
-            {/* Animated PNGs in background, shown when showPNGs is true */}
-            {showPNGs && (
-              <>
-                <style>{`
-                  @keyframes moveLeftToRight {
-                    0% { left: -40vw; }
-                    100% { left: 100vw; }
-                  }
-                  @keyframes moveRightToLeft {
-                    0% { right: -40vw; }
-                    100% { right: 100vw; }
-                  }
-                `}</style>
-                <img
-                  src="/1731786333420.jpg"
-                  alt="Background 1"
-                  style={{
-                    position: 'fixed',
-                    top: '20vh',
-                    left: 0,
-                    width: '40vw',
-                    maxHeight: '60vh',
-                    opacity: 0.3,
-                    zIndex: 100,
-                    pointerEvents: 'none',
-                    animation: 'moveLeftToRight 3s linear infinite',
-                  }}
-                />
-                <img
-                  src="/chad.png"
-                  alt="Chad"
-                  style={{
-                    position: 'fixed',
-                    top: '50vh',
-                    right: 0,
-                    width: '40vw',
-                    maxHeight: '60vh',
-                    opacity: 0.3,
-                    zIndex: 100,
-                    pointerEvents: 'none',
-                    animation: 'moveRightToLeft 3s linear infinite',
-                  }}
-                />
-              </>
-            )}
-            <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              Upload Your Files
-            </h2>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-              Drag & drop or use the buttons below to upload files and folders.
-            </p>
-          </div>
-
+          {/* Upload Area */}
           {!analysis ? (
-            /* Upload Area */
-            <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-white/80 backdrop-blur-sm">
-              <CardContent className="p-12">
-                {/* Replace the upload area with a true water glass effect and improved readability */}
-                <div
-                  className={
-                    `flex flex-col items-center justify-center w-full border border-gray-200 dark:border-gray-700 rounded-2xl p-14 mb-8 
-                  bg-white/80 dark:bg-slate-800/80 backdrop-filter backdrop-blur-xl shadow-lg 
-                  transition-all duration-300 ${
-                    isDragging
-                      ? "border-blue-400 bg-blue-50/80 dark:bg-blue-900/30 scale-[1.02]"
-                      : ""
-                  }`
-                }
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                >
-                  {/* Update the upload area icons to be larger and more intuitive */}
-                  <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gray-100/90 dark:bg-gray-700/90 shadow-sm">
-                    <Upload className="w-10 h-10 text-blue-600 dark:text-blue-400" strokeWidth={1.5} />
+            <div className="max-w-2xl mx-auto relative">
+              {/* Chromatic glow behind the upload box */}
+              <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[140%] rounded-3xl bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl" style={{zIndex:1}} />
+              <div
+                className={`flex flex-col items-center justify-center w-full rounded-3xl p-16 mb-10 bg-white dark:bg-slate-900 shadow-2xl border border-gray-200 dark:border-gray-700 ring-1 ring-gray-200/40 hover:shadow-3xl transition-all duration-300 relative overflow-hidden ${isDragging ? "scale-[1.03] ring-2 ring-blue-400/60" : ""}`}
+                style={{ background: '#fff', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)', border: '1.5px solid rgba(94, 114, 228, 0.12)', zIndex:2 }}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+              >
+                {/* Gradient overlay for depth */}
+                <div className="pointer-events-none absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-50/60 via-white/30 to-purple-100/60 dark:from-blue-900/30 dark:via-slate-800/20 dark:to-purple-900/30" />
+                {/* Dashed border for drop area */}
+                <div className={`absolute inset-0 rounded-3xl border-4 border-dashed transition-colors duration-300 ${isDragging ? "border-blue-400/80" : "border-blue-200/40 dark:border-blue-800/40"}`} style={{ zIndex: 1 }} />
+                {/* Content */}
+                <div className="relative z-10 flex flex-col items-center w-full">
+                  <div className="mx-auto mb-8 flex h-24 w-24 items-center justify-center rounded-full bg-white shadow-xl" style={{ boxShadow: '0 0 24px 0 #7c3aed33' }}>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="url(#eye-gradient)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-12 h-12">
+                      <defs>
+                        <linearGradient id="eye-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                          <stop stopColor="#2563eb" />
+                          <stop offset="1" stopColor="#7c3aed" />
+                        </linearGradient>
+                      </defs>
+                      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
                   </div>
-                  {/* Update heading and description to remove 'folders' */}
-                  <h3 className="text-2xl font-semibold mb-2 text-center text-gray-900 dark:text-white">Upload files</h3>
-                  <p className="text-lg text-gray-600 dark:text-gray-300 mb-8 text-center">Drag & drop or use the button below</p>
-                  {/* Only show the Files button, remove any folder/folders button */}
+                  <h3 className="text-3xl font-bold mb-3 text-center bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Upload or Drag Your Files</h3>
+                  <p className="text-lg text-gray-700 dark:text-gray-200 mb-6 text-center max-w-lg">Drop your files here, or use the button below to select files from your device. Your files are never stored.</p>
+                  <div className="flex items-center w-full justify-center mb-6">
+                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-200 to-transparent dark:via-blue-800" />
+                    <span className="mx-4 text-gray-400 text-base font-semibold">or</span>
+                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-purple-200 to-transparent dark:via-purple-800" />
+                  </div>
                   <div className="flex flex-row gap-4 w-full justify-center items-center mt-4">
                     <Button
                       type="button"
                       size="lg"
-                      className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
+                      className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={advancedOpen && selectedEngines.length === 0}
                     >
                       <FileUp className="w-6 h-6 text-blue-600" strokeWidth={2} />
-                      <span className="font-bold text-base text-blue-900">Files</span>
+                      <span className="font-bold text-base bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Files</span>
                     </Button>
                     <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
                       <PopoverTrigger asChild>
                         <Button
                           type="button"
                           size="lg"
-                          className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold text-blue-900 flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
+                          className="w-56 h-14 text-base rounded-xl bg-white/60 backdrop-blur-md border border-blue-200 shadow-lg font-bold flex items-center justify-center gap-2 hover:bg-white/80 hover:border-blue-400 hover:shadow-xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-blue-400"
                           aria-expanded={advancedOpen}
                         >
                           <Sliders className="h-6 w-6 text-blue-600" strokeWidth={2} />
-                          <span className="font-bold text-base text-blue-900">Engines</span>
+                          <span className="font-bold text-base bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Engines</span>
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-96 p-6 rounded-xl shadow-2xl bg-white/90 dark:bg-slate-900/90 border border-blue-200 dark:border-blue-700 backdrop-blur-md backdrop-saturate-150">
@@ -694,22 +659,52 @@ export default function ProbiumLens() {
                   <input type="file" id="file-upload" className="hidden" onChange={handleFileSelect} accept="*/*" multiple={false} ref={fileInputRef} />
                   <div className="mt-12 grid grid-cols-3 gap-8 text-center">
                     <div className="flex flex-col items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-yellow-100 to-orange-100 dark:from-yellow-900/20 dark:to-orange-900/20">
-                        <Zap className="w-6 h-6 text-yellow-600" />
+                      <div className="flex h-12 w-12 items-center justify-center relative">
+                        <div className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-white opacity-40 blur-2xl z-0" />
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#zap-gradient)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 relative z-10">
+                          <defs>
+                            <linearGradient id="zap-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                              <stop stopColor="#2563eb" />
+                              <stop offset="1" stopColor="#7c3aed" />
+                            </linearGradient>
+                          </defs>
+                          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                        </svg>
                       </div>
                       <span className="font-medium">Lightning Fast</span>
                       <span className="text-sm text-muted-foreground">Results in seconds</span>
                     </div>
                     <div className="flex flex-col items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-100 to-cyan-100 dark:from-blue-900/20 dark:to-cyan-900/20">
-                        <Database className="w-6 h-6 text-blue-600" />
+                      <div className="flex h-12 w-12 items-center justify-center relative">
+                        <div className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-white opacity-40 blur-2xl z-0" />
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#db-gradient)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 relative z-10">
+                          <defs>
+                            <linearGradient id="db-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                              <stop stopColor="#2563eb" />
+                              <stop offset="1" stopColor="#7c3aed" />
+                            </linearGradient>
+                          </defs>
+                          <ellipse cx="12" cy="5" rx="9" ry="3" />
+                          <path d="M3 5v14c0 1.657 4.03 3 9 3s9-1.343 9-3V5" />
+                          <path d="M3 12c0 1.657 4.03 3 9 3s9-1.343 9-3" />
+                        </svg>
                       </div>
                       <span className="font-medium">30+ Engines</span>
                       <span className="text-sm text-muted-foreground">Comprehensive scanning</span>
                     </div>
                     <div className="flex flex-col items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-green-100 to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20">
-                        <Lock className="w-6 h-6 text-green-600" />
+                      <div className="flex h-12 w-12 items-center justify-center relative">
+                        <div className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-white opacity-40 blur-2xl z-0" />
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="url(#lock-gradient)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 relative z-10">
+                          <defs>
+                            <linearGradient id="lock-gradient" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                              <stop stopColor="#2563eb" />
+                              <stop offset="1" stopColor="#7c3aed" />
+                            </linearGradient>
+                          </defs>
+                          <rect x="3" y="11" width="18" height="11" rx="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
                       </div>
                       <span className="font-medium">100% Secure</span>
                       <span className="text-sm text-muted-foreground">Files never stored</span>
@@ -728,9 +723,8 @@ export default function ProbiumLens() {
                     </div>
                   )}
                 </div>
-                {/* End upload area main div */}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ) : (
             /* Analysis Results */
             <div className="max-w-6xl mx-auto space-y-8">
