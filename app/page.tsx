@@ -209,30 +209,58 @@ export default function ProbiumLens() {
     if (fileName && fileName.includes('.')) {
       ext = fileName.split('.').pop()?.toLowerCase() || '';
     }
-    // Map common extensions to mime types for basic check, with aliases
-    const extToMime: Record<string, string[]> = {
-      pdf: ['application/pdf'],
-      exe: ['application/vnd.microsoft.portable-executable', 'application/x-msdownload'],
-      jpg: ['image/jpeg'],
-      jpeg: ['image/jpeg'],
-      png: ['image/png'],
-      doc: ['application/msword'],
-      docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-      xls: ['application/vnd.ms-excel'],
-      xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-      ppt: ['application/vnd.ms-powerpoint'],
-      pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
-      zip: ['application/zip'],
-      rar: ['application/x-rar-compressed'],
-      mp3: ['audio/mpeg'],
-      mp4: ['video/mp4'],
-      txt: ['text/plain'],
-      html: ['text/html'],
-      csv: ['text/csv'],
-    };
-    // Treat .jpg and .jpeg as equivalent, and other aliases
-    if (ext && fileType && extToMime[ext]) {
-      if (!extToMime[ext].includes(fileType)) {
+    // Canonical file type mapping for spoofed extension logic
+    function canonicalFileType(val: string): string {
+      if (!val) return '';
+      const map: Record<string, string> = {
+        'application/pdf': 'pdf',
+        'pdf': 'pdf',
+        'application/vnd.microsoft.portable-executable': 'exe',
+        'application/x-msdownload': 'exe',
+        'exe': 'exe',
+        'jpg': 'jpg',
+        'jpeg': 'jpg',
+        'image/jpeg': 'jpg',
+        'png': 'png',
+        'image/png': 'png',
+        'gif': 'gif',
+        'image/gif': 'gif',
+        'bmp': 'bmp',
+        'image/bmp': 'bmp',
+        'svg': 'svg',
+        'image/svg+xml': 'svg',
+        'doc': 'doc',
+        'application/msword': 'doc',
+        'docx': 'docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+        'xls': 'xls',
+        'application/vnd.ms-excel': 'xls',
+        'xlsx': 'xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+        'ppt': 'ppt',
+        'application/vnd.ms-powerpoint': 'ppt',
+        'pptx': 'pptx',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+        'zip': 'zip',
+        'application/zip': 'zip',
+        'rar': 'rar',
+        'application/x-rar-compressed': 'rar',
+        'mp3': 'mp3',
+        'audio/mpeg': 'mp3',
+        'mp4': 'mp4',
+        'video/mp4': 'mp4',
+        'txt': 'txt',
+        'text/plain': 'txt',
+        'html': 'html',
+        'text/html': 'html',
+        'csv': 'csv',
+        'text/csv': 'csv',
+      };
+      return map[val.toLowerCase()] || val.toLowerCase();
+    }
+    // Only flag as spoofed if canonical types are truly different
+    if (ext && fileType) {
+      if (canonicalFileType(ext) && canonicalFileType(fileType) && canonicalFileType(ext) !== canonicalFileType(fileType)) {
         spoofed = true;
         threats += 1;
       }
@@ -331,7 +359,7 @@ export default function ProbiumLens() {
       let scanData = { ...analysis };
       // Only use the structured format for the initial scan summary, not for chat
       let aiInstruction = chatInput.trim()
-        ? `You are an expert file security assistant. Given the following file context, answer the user's question in a single, short sentence. Only answer the user's question directly, with no extra explanation or context unless asked.\nFile context: ${JSON.stringify(scanData)}`
+        ? `You are an expert file security assistant. Given the following file context, answer the user's question in 1-2 sentences. Be concise but conversational. Only answer the user's question directly, with no extra explanation or context unless asked.\nFile context: ${JSON.stringify(scanData)}`
         : `Please format your response as follows:\n\nSummary\n⚠️ If there is a threat or spoofed extension, start with a warning (e.g., 'Potential Threat Detected').\n- File: [filename]\n- Size: [file size]\n- Uploaded: [upload time]\n- Detected Type: [detected type]\n- Extension: [extension] (note if it does not match detected type)\n\nWhy is this risky?\n- Briefly explain why a spoofed extension or threat is dangerous (if applicable).\n\nWhat should you do?\n- Give clear, actionable recommendations (e.g., 'Do NOT open this file. Delete it or report it to your IT/security team.').\n\nScan Results\n- Threats detected: [number]\n- Behavioral analysis: [summary or 'not conducted']\n\nUse bullet points, be concise, and make the summary easy to read. Only flag as spoofed if the extension and detected type are truly mismatched (e.g., .pdf vs application/exe, but not .jpg vs image/jpeg).`;
       const res = await fetch("/api/ai-insights", {
         method: "POST",
