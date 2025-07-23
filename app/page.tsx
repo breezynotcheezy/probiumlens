@@ -180,7 +180,7 @@ export default function ProbiumLens() {
   // Always render the main UI below
 
   // Helper to parse backend scan result into FileAnalysis
-  const parseScanResult = (result: any): FileAnalysis => {
+  const parseScanResult = (result: any): FileAnalysis & { spoofed?: boolean } => {
     // Debug log
     console.log('Scan result:', result);
     // Map engines_used to a list of engines, using threat_level for all (since no per-engine breakdown)
@@ -195,7 +195,7 @@ export default function ProbiumLens() {
               : "clean",
         }))
       : [];
-    const threats = result.security?.threat_level === "high" || result.security?.threat_level === "medium" ? 1 : 0;
+    let threats = result.security?.threat_level === "high" || result.security?.threat_level === "medium" ? 1 : 0;
     // Defensive checks
     let fileSize = '-- MB';
     if (typeof result.size === 'number' && !isNaN(result.size)) {
@@ -203,6 +203,40 @@ export default function ProbiumLens() {
     }
     const fileType = result.mime_type || result.detected_type || 'Unknown';
     const fileName = result.filename || 'Unknown';
+    // Spoofed extension detection
+    let spoofed = false;
+    let ext = '';
+    if (fileName && fileName.includes('.')) {
+      ext = fileName.split('.').pop()?.toLowerCase() || '';
+    }
+    // Map common extensions to mime types for basic check, with aliases
+    const extToMime: Record<string, string[]> = {
+      pdf: ['application/pdf'],
+      exe: ['application/vnd.microsoft.portable-executable', 'application/x-msdownload'],
+      jpg: ['image/jpeg'],
+      jpeg: ['image/jpeg'],
+      png: ['image/png'],
+      doc: ['application/msword'],
+      docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+      xls: ['application/vnd.ms-excel'],
+      xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      ppt: ['application/vnd.ms-powerpoint'],
+      pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+      zip: ['application/zip'],
+      rar: ['application/x-rar-compressed'],
+      mp3: ['audio/mpeg'],
+      mp4: ['video/mp4'],
+      txt: ['text/plain'],
+      html: ['text/html'],
+      csv: ['text/csv'],
+    };
+    // Treat .jpg and .jpeg as equivalent, and other aliases
+    if (ext && fileType && extToMime[ext]) {
+      if (!extToMime[ext].includes(fileType)) {
+        spoofed = true;
+        threats += 1;
+      }
+    }
     return {
       fileName,
       fileSize,
@@ -217,6 +251,7 @@ export default function ProbiumLens() {
         ...result.hashes,
       },
       behaviorAnalysis: {},
+      spoofed,
     };
   };
 
@@ -292,12 +327,18 @@ export default function ProbiumLens() {
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput("");
     try {
+      // If spoofed, add a note to the prompt
+      let scanData = { ...analysis };
+      // Only use the structured format for the initial scan summary, not for chat
+      let aiInstruction = chatInput.trim()
+        ? `You are an expert file security assistant. Given the following file context, answer the user's question in a single, short sentence. Only answer the user's question directly, with no extra explanation or context unless asked.\nFile context: ${JSON.stringify(scanData)}`
+        : `Please format your response as follows:\n\nSummary\n⚠️ If there is a threat or spoofed extension, start with a warning (e.g., 'Potential Threat Detected').\n- File: [filename]\n- Size: [file size]\n- Uploaded: [upload time]\n- Detected Type: [detected type]\n- Extension: [extension] (note if it does not match detected type)\n\nWhy is this risky?\n- Briefly explain why a spoofed extension or threat is dangerous (if applicable).\n\nWhat should you do?\n- Give clear, actionable recommendations (e.g., 'Do NOT open this file. Delete it or report it to your IT/security team.').\n\nScan Results\n- Threats detected: [number]\n- Behavioral analysis: [summary or 'not conducted']\n\nUse bullet points, be concise, and make the summary easy to read. Only flag as spoofed if the extension and detected type are truly mismatched (e.g., .pdf vs application/exe, but not .jpg vs image/jpeg).`;
       const res = await fetch("/api/ai-insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scanData: analysis,
-          userPrompt: chatInput,
+          scanData,
+          userPrompt: `${aiInstruction}\n${chatInput}`,
           temperature: chatTemperature,
           max_tokens: chatMaxTokens,
         }),
@@ -433,6 +474,34 @@ export default function ProbiumLens() {
       return newCount === 3 ? 0 : newCount;
     });
   };
+
+  // Helper to map MIME types to friendly labels
+  function getFriendlyFileType(mime: string): string {
+    const map: Record<string, string> = {
+      'application/pdf': 'PDF',
+      'application/vnd.microsoft.portable-executable': '.exe (Windows Executable)',
+      'application/msword': 'Word Document',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word Document (.docx)',
+      'application/vnd.ms-excel': 'Excel Spreadsheet',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel Spreadsheet (.xlsx)',
+      'application/vnd.ms-powerpoint': 'PowerPoint Presentation',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PowerPoint Presentation (.pptx)',
+      'application/zip': 'ZIP Archive',
+      'application/x-rar-compressed': 'RAR Archive',
+      'audio/mpeg': 'MP3 Audio',
+      'video/mp4': 'MP4 Video',
+      'text/plain': 'Text File',
+      'text/html': 'HTML Document',
+      'text/csv': 'CSV File',
+      'image/jpeg': 'JPEG Image',
+      'image/png': 'PNG Image',
+      'image/gif': 'GIF Image',
+      'image/bmp': 'BMP Image',
+      'image/svg+xml': 'SVG Image',
+      'application/x-msdownload': '.exe (Windows Executable)',
+    };
+    return map[mime] || mime;
+  }
 
   return (
     <>
@@ -739,8 +808,12 @@ export default function ProbiumLens() {
                       <CardTitle className="flex items-center gap-3 text-xl">
                         {analysis.fileName}
                         {analysis.status === "complete" && (
-                          <Badge variant={analysis.threats > 0 ? "destructive" : "default"} className="text-sm px-3 py-1">
-                            {analysis.threats > 0 ? `${analysis.threats} threats detected` : "✓ Clean"}
+                          <Badge variant={analysis.spoofed ? "destructive" : (analysis.threats > 0 ? "destructive" : "default") } className="text-sm px-3 py-1">
+                            {analysis.spoofed
+                              ? "Possible Threat: Spoofed Extension"
+                              : analysis.threats > 0
+                                ? `${analysis.threats} threats detected`
+                                : "✓ Clean"}
                           </Badge>
                         )}
                       </CardTitle>
@@ -866,24 +939,122 @@ export default function ProbiumLens() {
                                   const sections = parseAiInsights(aiInsights);
                                   return (
                                     <div className="space-y-6">
-                                      {sections["Summary"] && (
-                                        <div>
-                                          <div className="font-semibold text-lg mb-1">Summary</div>
-                                          <div className="text-base text-gray-800 dark:text-gray-200">
-                                            {sections["Summary"].join(" ")}
+                                      {/* Detection Summary Box */}
+                                      <div className="mb-8">
+                                        <div className="rounded-3xl bg-white/80 dark:bg-slate-900/80 shadow-2xl p-8 flex flex-col md:flex-row items-center gap-6 border border-gray-200 dark:border-gray-700 backdrop-blur-xl">
+                                          <div className="flex-shrink-0 flex flex-col items-center gap-2">
+                                            <span className={`inline-flex items-center justify-center w-16 h-16 rounded-full shadow-lg text-4xl ${analysis.spoofed ? 'bg-gradient-to-br from-red-500 to-red-700 text-white' : analysis.threats > 0 ? 'bg-gradient-to-br from-red-500 to-pink-500 text-white' : 'bg-gradient-to-br from-green-400 to-blue-500 text-white'}`}>
+                                              {analysis.spoofed ? (
+                                                // Shield-exclamation for spoofed
+                                                <svg width="36" height="36" fill="none" viewBox="0 0 24 24"><path d="M12 3l7.53 4.36A2 2 0 0 1 21 8.92v6.16a2 2 0 0 1-1.47 1.56L12 21l-7.53-4.36A2 2 0 0 1 3 15.08V8.92a2 2 0 0 1 1.47-1.56L12 3Z" stroke="currentColor" strokeWidth="2"/><path d="M12 9v4m0 4h.01" stroke="currentColor" strokeWidth="2"/></svg>
+                                              ) : analysis.threats > 0 ? (
+                                                // Bug for threat detected
+                                                <svg width="36" height="36" fill="none" viewBox="0 0 24 24"><path d="M19 7l-1.5 1.5M5 7l1.5 1.5M12 3v2m0 14v2m7-7h2M3 12H1m16.24 7.24l-1.42-1.42M7.76 19.24l1.42-1.42M12 8a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0v-4a4 4 0 0 1 4-4Z" stroke="currentColor" strokeWidth="2"/></svg>
+                                              ) : (
+                                                // Shield-check for clean
+                                                <svg width="36" height="36" fill="none" viewBox="0 0 24 24"><path d="M12 3l7.53 4.36A2 2 0 0 1 21 8.92v6.16a2 2 0 0 1-1.47 1.56L12 21l-7.53-4.36A2 2 0 0 1 3 15.08V8.92a2 2 0 0 1 1.47-1.56L12 3Z" stroke="currentColor" strokeWidth="2"/><path d="M9 12l2 2l4-4" stroke="currentColor" strokeWidth="2"/></svg>
+                                              )}
+                                            </span>
+                                            <span className="font-bold text-lg mt-2">
+                                              {analysis.spoofed ? 'Possible Spoofed File' : analysis.threats > 0 ? 'Threat Detected' : 'File is Clean'}
+                                            </span>
+                                          </div>
+                                          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                              <div className="text-sm text-gray-500 dark:text-gray-400">File Name</div>
+                                              <div className="font-semibold text-gray-900 dark:text-white break-words whitespace-pre-line" title={analysis.fileName}>{analysis.fileName}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-sm text-gray-500 dark:text-gray-400">File Type</div>
+                                              <div className="font-semibold text-gray-900 dark:text-white break-words whitespace-pre-line" title={analysis.fileType}>{getFriendlyFileType(analysis.fileType)}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-sm text-gray-500 dark:text-gray-400">File Size</div>
+                                              <div className="font-semibold text-gray-900 dark:text-white">{analysis.fileSize}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-sm text-gray-500 dark:text-gray-400">Uploaded</div>
+                                              <div className="font-semibold text-gray-900 dark:text-white">{analysis.uploadTime}</div>
+                                            </div>
+                                            {analysis.spoofed && (
+                                              <div className="col-span-2">
+                                                <div className="text-sm text-yellow-700 dark:text-yellow-300 font-semibold">Warning: File extension does not match detected file type. This is a possible spoofed or malicious file.</div>
+                                              </div>
+                                            )}
+                                            {analysis.threats > 0 && !analysis.spoofed && (
+                                              <div className="col-span-2">
+                                                <div className="text-sm text-red-700 dark:text-red-300 font-semibold">Threats detected: {analysis.threats}</div>
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
-                                      )}
-                                      {sections["Notable Findings"] && (
-                                        <div>
-                                          <div className="font-semibold text-lg mb-1">Notable Findings</div>
-                                          <ul className="list-disc pl-6 text-base text-gray-800 dark:text-gray-200">
-                                            {sections["Notable Findings"].map((item, idx) => (
-                                              <li key={idx}>{item}</li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
+                                      </div>
+                                      {/* Glassmorphic AI Output Cards */}
+                                      <div className="grid gap-6 md:grid-cols-2">
+                                        {sections["Summary"] && (
+                                          <div className="rounded-2xl bg-white/60 dark:bg-slate-900/60 shadow-xl p-6 backdrop-blur-md border border-gray-200 dark:border-gray-700 flex flex-col gap-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-lg">
+                                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24"><path d="M12 20c4.418 0 8-4.03 8-8s-3.582-8-8-8-8 4.03-8 8 3.582 8 8 8Zm0-4a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" strokeWidth="2"/></svg>
+                                              </span>
+                                              <span className="font-bold text-lg">Summary</span>
+                                            </div>
+                                            <div className="text-base text-gray-800 dark:text-gray-200 whitespace-pre-line">{sections["Summary"].join(" ")}</div>
+                                          </div>
+                                        )}
+                                        {sections["Notable Findings"] && (
+                                          <div className="rounded-2xl bg-white/60 dark:bg-slate-900/60 shadow-xl p-6 backdrop-blur-md border border-gray-200 dark:border-gray-700 flex flex-col gap-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-green-600 text-white shadow-lg">
+                                                {/* Warning triangle for Notable Findings */}
+                                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01M10.29 3.86l-8.53 14.78A2 2 0 0 0 3.18 21h17.64a2 2 0 0 0 1.71-2.36l-8.53-14.78a2 2 0 0 0-3.42 0Z" stroke="currentColor" strokeWidth="2"/></svg>
+                                              </span>
+                                              <span className="font-bold text-lg">Notable Findings</span>
+                                            </div>
+                                            <ul className="list-disc pl-6 text-base text-gray-800 dark:text-gray-200">
+                                              {analysis.spoofed && (
+                                                <li className="text-red-600 font-semibold">File extension does not match detected file type. This is a possible spoofed or malicious file.</li>
+                                              )}
+                                              <li>File type: {analysis.fileType}</li>
+                                              {sections["Notable Findings"].map((item, idx) => (
+                                                <li key={idx}>{item}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {sections["What should you do?"] && (
+                                          <div className="rounded-2xl bg-white/60 dark:bg-slate-900/60 shadow-xl p-6 backdrop-blur-md border border-gray-200 dark:border-gray-700 flex flex-col gap-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-blue-500 text-white shadow-lg">
+                                                {/* Checkmark for What should you do? */}
+                                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2"/></svg>
+                                              </span>
+                                              <span className="font-bold text-lg">What should you do?</span>
+                                            </div>
+                                            <ul className="list-disc pl-6 text-base text-gray-800 dark:text-gray-200">
+                                              {sections["What should you do?"].map((item, idx) => (
+                                                <li key={idx}>{item}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {sections["Scan Results"] && (
+                                          <div className="rounded-2xl bg-white/60 dark:bg-slate-900/60 shadow-xl p-6 backdrop-blur-md border border-gray-200 dark:border-gray-700 flex flex-col gap-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 text-white shadow-lg">
+                                                {/* Info circle for Scan Results */}
+                                                <svg width="20" height="20" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/><path d="M12 16v-4m0-4h.01" stroke="currentColor" strokeWidth="2"/></svg>
+                                              </span>
+                                              <span className="font-bold text-lg">Scan Results</span>
+                                            </div>
+                                            <ul className="list-disc pl-6 text-base text-gray-800 dark:text-gray-200">
+                                              {sections["Scan Results"].map((item, idx) => (
+                                                <li key={idx}>{item}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                      </div>
                                     </div>
                                   );
                                 })()
